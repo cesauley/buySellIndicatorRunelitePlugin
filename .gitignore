@@ -1,9 +1,41 @@
-.gradle
-build
+# Gradle
+.gradle/
+build/
+gradlew.bat.bak
+
+# IntelliJ IDEA
 .idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Eclipse
 .project
 .settings/
 .classpath
+bin/
+
+# NetBeans
 nbactions.xml
 nb-configuration.xml
 nbproject/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Compiled output that doesn't belong in source control
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Log files
+*.log
