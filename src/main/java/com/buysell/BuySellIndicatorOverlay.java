@@ -1,8 +1,9 @@
 package com.buysell;
 
-import com.buysell.model.Signal;
 import com.buysell.model.SignalResult;
+import net.runelite.api.ItemComposition;
 import net.runelite.api.widgets.WidgetItem;
+import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.overlay.WidgetItemOverlay;
 
 import javax.inject.Inject;
@@ -19,6 +20,10 @@ import java.awt.RenderingHints;
  *
  * Rendering is non-blocking: if the analysis result is not yet cached the
  * overlay shows a small "…" indicator while the background fetch completes.
+ *
+ * Items that are not tradeable on the Grand Exchange are skipped (no overlay,
+ * no API fetch). Noted and placeholder variants are resolved via
+ * {@link ItemManager#canonicalize(int)}.
  */
 public class BuySellIndicatorOverlay extends WidgetItemOverlay
 {
@@ -30,14 +35,17 @@ public class BuySellIndicatorOverlay extends WidgetItemOverlay
 
     private final PriceAnalysisService analysisService;
     private final BuySellIndicatorConfig config;
+    private final ItemManager itemManager;
 
     @Inject
     public BuySellIndicatorOverlay(
         PriceAnalysisService analysisService,
-        BuySellIndicatorConfig config)
+        BuySellIndicatorConfig config,
+        ItemManager itemManager)
     {
         this.analysisService = analysisService;
         this.config = config;
+        this.itemManager = itemManager;
 
         showOnInventory();
         showOnBank();
@@ -54,7 +62,14 @@ public class BuySellIndicatorOverlay extends WidgetItemOverlay
         // so we rely on the showOnInventory()/showOnBank() calls in the constructor together with
         // the plugin wiring that registers/unregisters the overlay based on config.
 
-        SignalResult result = analysisService.getSignal(itemId);
+        int canonicalId = itemManager.canonicalize(itemId);
+        ItemComposition def = itemManager.getItemComposition(canonicalId);
+        if (!def.isTradeable())
+        {
+            return;
+        }
+
+        SignalResult result = analysisService.getSignal(canonicalId);
 
         Rectangle bounds = widgetItem.getCanvasBounds();
         if (bounds == null)

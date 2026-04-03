@@ -3,6 +3,9 @@ package com.buysell;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -21,12 +24,16 @@ import javax.inject.Inject;
 @PluginDescriptor(
     name = "Buy/Sell Indicator",
     description = "Shows BUY/SELL/HOLD signals with confidence % on inventory and bank items "
-        + "using EMA crossover, RSI-14, and VWAP trend analysis of OSRS Wiki GE prices.",
+        + "using configurable analysis bundles for flipping and long-term merchanting "
+        + "(mean reversion, classic TA, z-score) on OSRS Wiki GE prices.",
     tags = {"buy", "sell", "ge", "grand exchange", "price", "indicator", "trading", "flipping",
-        "bank", "inventory"}
+        "merchanting", "bank", "inventory"}
 )
 public class BuySellIndicatorPlugin extends Plugin
 {
+    @Inject
+    private EventBus eventBus;
+
     @Inject
     private OverlayManager overlayManager;
 
@@ -39,6 +46,7 @@ public class BuySellIndicatorPlugin extends Plugin
     @Override
     protected void startUp()
     {
+        eventBus.register(this);
         overlayManager.add(overlay);
         log.info("Buy/Sell Indicator plugin started");
     }
@@ -46,9 +54,19 @@ public class BuySellIndicatorPlugin extends Plugin
     @Override
     protected void shutDown()
     {
+        eventBus.unregister(this);
         overlayManager.remove(overlay);
         analysisService.clearCache();
         log.info("Buy/Sell Indicator plugin stopped");
+    }
+
+    @Subscribe
+    public void onConfigChanged(ConfigChanged event)
+    {
+        if ("buysell".equals(event.getGroup()) && "analysisBundle".equals(event.getKey()))
+        {
+            analysisService.clearCache();
+        }
     }
 
     @Provides

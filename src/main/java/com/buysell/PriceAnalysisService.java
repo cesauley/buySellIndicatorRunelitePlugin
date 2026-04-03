@@ -23,42 +23,54 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Fetches hourly price timeseries from the OSRS Wiki Prices API and runs a
- * three-factor technical analysis model (EMA crossover, RSI-14, VWAP trend)
- * to produce a BUY / SELL / HOLD signal with a confidence percentage.
+ * Fetches price timeseries from the OSRS Wiki Prices API and runs the analysis
+ * model selected by {@link BuySellIndicatorConfig.AnalysisBundle}: flip-style
+ * mean reversion, classic momentum TA, or rolling z-score. Bundles are grouped
+ * into flipping (short horizons) vs merchanting (daily, long windows); signal
+ * interpretation depends on the chosen bundle (see README).
  *
- * Results are cached per item for a configurable number of minutes to avoid
- * hammering the API. All network I/O and computation runs on a background
- * thread pool; the overlay reads results non-blocking via the cache map.
+ * <p>The Wiki {@code /timeseries} endpoint returns at most 365 data points per request.
  */
 @Slf4j
 @Singleton
 public class PriceAnalysisService
 {
-    private static final String BASE_URL = "https://prices.runescape.wiki/api/v1/osrs";
-    private static final String USER_AGENT = "BuySellIndicatorPlugin - RuneLite external plugin";
+    /** OSRS Wiki Prices API caps timeseries responses at 365 data points. */
+    private static final int WIKI_TIMESERIES_MAX_POINTS = 365;
 
-    // Weights must sum to 1.0
+    private static final int MIN_CANDLES_FOR_FLIP = 8;
+
+    /** Classic TA: EMA fast/slow, RSI, VWAP short/long (aligned with prior plugin presets). */
+    private static final int CLASSIC_EMA_FAST = 6;
+    private static final int CLASSIC_EMA_SLOW = 24;
+    private static final int CLASSIC_RSI_PERIOD = 14;
+    private static final int CLASSIC_VWAP_SHORT = 6;
+    private static final int CLASSIC_VWAP_LONG = 24;
+
+    private static final int CLASSIC_MIN_CANDLES = Math.max(
+        CLASSIC_RSI_PERIOD + 1,
+        Math.max(CLASSIC_VWAP_LONG, CLASSIC_EMA_SLOW));
+
+    private static final double ZSCORE_CAP = 2.0;
+
+    private static final String BASE_URL = "https://prices.runescape.wiki/api/v1/osrs";
+
+    private static final String USER_AGENT =
+        "BuySellIndicator/1.0 (RuneLite plugin; OSRS Wiki GE timeseries; maintainer's discord: neonic1996)";
+
+    private static final double WEIGHT_RANGE = 0.40;
+    private static final double WEIGHT_VWAP_DEV = 0.35;
+    private static final double WEIGHT_VELOCITY = 0.25;
+
     private static final double WEIGHT_EMA = 0.40;
     private static final double WEIGHT_RSI = 0.35;
-    private static final double WEIGHT_VWAP = 0.25;
-
-    private static final int EMA_FAST = 6;
-    private static final int EMA_SLOW = 24;
-    private static final int RSI_PERIOD = 14;
-    private static final int VWAP_SHORT = 6;
-    private static final int VWAP_LONG = 24;
-
-    /** Minimum candles needed to compute all indicators. */
-    private static final int MIN_CANDLES = 28;
+    private static final double WEIGHT_VWAP_TREND = 0.25;
 
     private final OkHttpClient httpClient;
     private final BuySellIndicatorConfig config;
 
-    /** Thread-safe result cache: itemId → SignalResult */
     private final Map<Integer, SignalResult> cache = new ConcurrentHashMap<>();
 
-    /** Items currently being fetched to avoid duplicate in-flight requests. */
     private final Set<Integer> inFlight = ConcurrentHashMap.newKeySet();
 
     private final ExecutorService executor = Executors.newCachedThreadPool(r ->
@@ -75,10 +87,6 @@ public class PriceAnalysisService
         this.config = config;
     }
 
-    /**
-     * Returns a cached SignalResult if one is fresh, otherwise triggers a
-     * background fetch and returns null (the overlay should show a loading state).
-     */
     public SignalResult getSignal(int itemId)
     {
         SignalResult cached = cache.get(itemId);
@@ -89,25 +97,34 @@ public class PriceAnalysisService
             return cached;
         }
 
-        // Trigger async fetch only once per item
         if (inFlight.add(itemId))
         {
             executor.submit(() -> fetchAndAnalyse(itemId));
         }
 
-        // Return stale data while refreshing, or null if never loaded
         return cached;
     }
 
-    /** Evicts all cached entries, forcing a fresh fetch on next access. */
     public void clearCache()
     {
         cache.clear();
     }
 
-    // -------------------------------------------------------------------------
-    // Private: network + analysis
-    // -------------------------------------------------------------------------
+    private static int minCandlesRequired(BuySellIndicatorConfig.AnalysisBundle bundle)
+    {
+        switch (bundle.getModel())
+        {
+            case FLIP:
+                return Math.min(MIN_CANDLES_FOR_FLIP, bundle.getMaxCandles());
+            case CLASSIC_TA:
+                return Math.min(CLASSIC_MIN_CANDLES, bundle.getMaxCandles());
+            case ZSCORE:
+                int w = bundle.getZScoreSmaPeriod();
+                return Math.min(w + 2, bundle.getMaxCandles());
+            default:
+                return MIN_CANDLES_FOR_FLIP;
+        }
+    }
 
     private void fetchAndAnalyse(int itemId)
     {
@@ -115,17 +132,18 @@ public class PriceAnalysisService
         {
             List<Candle> candles = fetchTimeseries(itemId);
             SignalResult result;
+            BuySellIndicatorConfig.AnalysisBundle bundle = config.analysisBundle();
+            int minCandles = minCandlesRequired(bundle);
 
-            if (candles == null || candles.size() < MIN_CANDLES)
+            if (candles == null || candles.size() < minCandles)
             {
-                log.debug("Not enough candles for item {} (got {})", itemId,
-                    candles == null ? 0 : candles.size());
+                log.debug("Not enough candles for item {} (got {}, need {})", itemId,
+                    candles == null ? 0 : candles.size(), minCandles);
                 result = SignalResult.hold();
             }
             else
             {
-                result = analyse(candles);
-                // Apply minimum confidence threshold from config
+                result = analyse(candles, bundle);
                 if (result.getConfidence() < config.minConfidence())
                 {
                     result = new SignalResult(Signal.HOLD, result.getConfidence(),
@@ -138,7 +156,6 @@ public class PriceAnalysisService
         catch (Exception e)
         {
             log.warn("Failed to fetch/analyse item {}: {}", itemId, e.getMessage());
-            // Cache a HOLD so we don't spam the API on every render frame
             cache.put(itemId, SignalResult.hold());
         }
         finally
@@ -149,7 +166,8 @@ public class PriceAnalysisService
 
     private List<Candle> fetchTimeseries(int itemId) throws IOException
     {
-        String url = BASE_URL + "/timeseries?id=" + itemId + "&timestep=1h";
+        String timestep = config.analysisBundle().getApiTimestep();
+        String url = BASE_URL + "/timeseries?id=" + itemId + "&timestep=" + timestep;
         Request request = new Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
@@ -183,7 +201,6 @@ public class PriceAnalysisService
         {
             JsonObject obj = el.getAsJsonObject();
 
-            // API may return null for either price if no trades occurred in that period
             JsonElement highEl = obj.get("avgHighPrice");
             JsonElement lowEl = obj.get("avgLowPrice");
             JsonElement highVolEl = obj.get("highPriceVolume");
@@ -211,62 +228,85 @@ public class PriceAnalysisService
         return candles.isEmpty() ? null : candles;
     }
 
-    // -------------------------------------------------------------------------
-    // Private: technical analysis
-    // -------------------------------------------------------------------------
+    private SignalResult analyse(List<Candle> candles, BuySellIndicatorConfig.AnalysisBundle bundle)
+    {
+        int effectiveMax = Math.min(WIKI_TIMESERIES_MAX_POINTS, bundle.getMaxCandles());
+        if (candles.size() > effectiveMax)
+        {
+            candles = new ArrayList<>(candles.subList(candles.size() - effectiveMax, candles.size()));
+        }
 
-    private SignalResult analyse(List<Candle> candles)
+        switch (bundle.getModel())
+        {
+            case FLIP:
+                return analyseFlip(candles);
+            case CLASSIC_TA:
+                return analyseClassicTa(candles);
+            case ZSCORE:
+                return analyseZScore(candles, bundle.getZScoreSmaPeriod());
+            default:
+                throw new IllegalStateException("Unhandled model: " + bundle.getModel());
+        }
+    }
+
+    private SignalResult analyseFlip(List<Candle> candles)
     {
         double[] mid = midPrices(candles);
+        int n = mid.length;
+        double currentPrice = mid[n - 1];
 
-        // ── EMA Crossover ────────────────────────────────────────────────────
-        double emaFast = ema(mid, EMA_FAST);
-        double emaSlow = ema(mid, EMA_SLOW);
-        Signal emaSignal = emaFast > emaSlow ? Signal.BUY : Signal.SELL;
-        // Confidence: how far apart the EMAs are relative to slow EMA, capped at 1.0
-        double emaConf = Math.min(Math.abs(emaFast - emaSlow) / emaSlow * 20.0, 1.0);
-
-        // ── RSI-14 ───────────────────────────────────────────────────────────
-        double rsi = rsi(mid, RSI_PERIOD);
-        Signal rsiSignal;
-        double rsiConf;
-        if (rsi <= 30)
+        double periodMin = minMid(mid);
+        double periodMax = maxMid(mid);
+        double rangePos;
+        if (periodMax <= periodMin)
         {
-            rsiSignal = Signal.BUY;
-            rsiConf = (30.0 - rsi) / 30.0; // 0→30 RSI = 0→100% conf
-        }
-        else if (rsi >= 70)
-        {
-            rsiSignal = Signal.SELL;
-            rsiConf = (rsi - 70.0) / 30.0;
-        }
-        else if (rsi < 50)
-        {
-            rsiSignal = Signal.BUY;
-            rsiConf = (50.0 - rsi) / 20.0 * 0.5; // weaker, max 50%
+            rangePos = 0.5;
         }
         else
         {
-            rsiSignal = Signal.SELL;
-            rsiConf = (rsi - 50.0) / 20.0 * 0.5;
+            rangePos = (currentPrice - periodMin) / (periodMax - periodMin);
         }
+        Signal rangeSignal = rangePos < 0.5 ? Signal.BUY : Signal.SELL;
+        double rangeConf = Math.abs(rangePos - 0.5) / 0.5;
 
-        // ── VWAP Trend ───────────────────────────────────────────────────────
-        double vwapShort = vwap(candles, VWAP_SHORT);
-        double vwapLong = vwap(candles, VWAP_LONG);
-        Signal vwapSignal = vwapShort > vwapLong ? Signal.BUY : Signal.SELL;
-        double vwapConf = Math.min(Math.abs(vwapShort - vwapLong) / vwapLong * 15.0, 1.0);
+        double vwapFull = vwap(candles, n);
+        double vwapDev = vwapFull > 0 ? (currentPrice - vwapFull) / vwapFull : 0.0;
+        Signal vwapDevSignal;
+        if (vwapDev < 0)
+        {
+            vwapDevSignal = Signal.BUY;
+        }
+        else if (vwapDev > 0)
+        {
+            vwapDevSignal = Signal.SELL;
+        }
+        else
+        {
+            vwapDevSignal = null;
+        }
+        double vwapDevConf = Math.min(Math.abs(vwapDev) * 10.0, 1.0);
 
-        // ── Weighted combination ─────────────────────────────────────────────
+        VelocityResult vel = priceVelocity(mid);
+        Signal velSignal = vel.getSignal();
+        double velConf = vel.getConfidence();
+
         double buyScore = 0.0;
         double sellScore = 0.0;
 
-        buyScore  += (emaSignal  == Signal.BUY)  ? WEIGHT_EMA  * emaConf  : 0;
-        sellScore += (emaSignal  == Signal.SELL) ? WEIGHT_EMA  * emaConf  : 0;
-        buyScore  += (rsiSignal  == Signal.BUY)  ? WEIGHT_RSI  * rsiConf  : 0;
-        sellScore += (rsiSignal  == Signal.SELL) ? WEIGHT_RSI  * rsiConf  : 0;
-        buyScore  += (vwapSignal == Signal.BUY)  ? WEIGHT_VWAP * vwapConf : 0;
-        sellScore += (vwapSignal == Signal.SELL) ? WEIGHT_VWAP * vwapConf : 0;
+        buyScore += (rangeSignal == Signal.BUY) ? WEIGHT_RANGE * rangeConf : 0;
+        sellScore += (rangeSignal == Signal.SELL) ? WEIGHT_RANGE * rangeConf : 0;
+
+        if (vwapDevSignal != null)
+        {
+            buyScore += (vwapDevSignal == Signal.BUY) ? WEIGHT_VWAP_DEV * vwapDevConf : 0;
+            sellScore += (vwapDevSignal == Signal.SELL) ? WEIGHT_VWAP_DEV * vwapDevConf : 0;
+        }
+
+        if (velSignal != null)
+        {
+            buyScore += (velSignal == Signal.BUY) ? WEIGHT_VELOCITY * velConf : 0;
+            sellScore += (velSignal == Signal.SELL) ? WEIGHT_VELOCITY * velConf : 0;
+        }
 
         Signal dominant;
         double rawConf;
@@ -281,21 +321,146 @@ public class PriceAnalysisService
             rawConf = sellScore;
         }
 
-        // ── Spread penalty ───────────────────────────────────────────────────
-        // Items with a very wide bid/ask spread have less reliable signals
-        double latestMid = mid[mid.length - 1];
+        return finalizeWithSpreadPenalty(dominant, rawConf, candles, currentPrice);
+    }
+
+    private SignalResult analyseClassicTa(List<Candle> candles)
+    {
+        double[] mid = midPrices(candles);
+
+        double emaFast = ema(mid, CLASSIC_EMA_FAST);
+        double emaSlow = ema(mid, CLASSIC_EMA_SLOW);
+        Signal emaSignal = emaFast > emaSlow ? Signal.BUY : Signal.SELL;
+        double emaConf = emaSlow > 0
+            ? Math.min(Math.abs(emaFast - emaSlow) / emaSlow * 20.0, 1.0) : 0.0;
+
+        double rsi = rsi(mid, CLASSIC_RSI_PERIOD);
+        Signal rsiSignal;
+        double rsiConf;
+        if (rsi <= 30)
+        {
+            rsiSignal = Signal.BUY;
+            rsiConf = (30.0 - rsi) / 30.0;
+        }
+        else if (rsi >= 70)
+        {
+            rsiSignal = Signal.SELL;
+            rsiConf = (rsi - 70.0) / 30.0;
+        }
+        else if (rsi < 50)
+        {
+            rsiSignal = Signal.BUY;
+            rsiConf = (50.0 - rsi) / 20.0 * 0.5;
+        }
+        else
+        {
+            rsiSignal = Signal.SELL;
+            rsiConf = (rsi - 50.0) / 20.0 * 0.5;
+        }
+
+        double vwapShort = vwap(candles, CLASSIC_VWAP_SHORT);
+        double vwapLong = vwap(candles, CLASSIC_VWAP_LONG);
+        Signal vwapSignal = null;
+        double vwapConf = 0.0;
+        if (vwapLong > 0)
+        {
+            vwapSignal = vwapShort > vwapLong ? Signal.BUY : Signal.SELL;
+            vwapConf = Math.min(Math.abs(vwapShort - vwapLong) / vwapLong * 15.0, 1.0);
+        }
+
+        double buyScore = 0.0;
+        double sellScore = 0.0;
+
+        buyScore += (emaSignal == Signal.BUY) ? WEIGHT_EMA * emaConf : 0;
+        sellScore += (emaSignal == Signal.SELL) ? WEIGHT_EMA * emaConf : 0;
+        buyScore += (rsiSignal == Signal.BUY) ? WEIGHT_RSI * rsiConf : 0;
+        sellScore += (rsiSignal == Signal.SELL) ? WEIGHT_RSI * rsiConf : 0;
+        if (vwapSignal != null)
+        {
+            buyScore += (vwapSignal == Signal.BUY) ? WEIGHT_VWAP_TREND * vwapConf : 0;
+            sellScore += (vwapSignal == Signal.SELL) ? WEIGHT_VWAP_TREND * vwapConf : 0;
+        }
+
+        Signal dominant;
+        double rawConf;
+        if (buyScore >= sellScore)
+        {
+            dominant = Signal.BUY;
+            rawConf = buyScore;
+        }
+        else
+        {
+            dominant = Signal.SELL;
+            rawConf = sellScore;
+        }
+
+        double currentPrice = mid[mid.length - 1];
+        return finalizeWithSpreadPenalty(dominant, rawConf, candles, currentPrice);
+    }
+
+    private SignalResult analyseZScore(List<Candle> candles, int window)
+    {
+        double[] mid = midPrices(candles);
+        int n = mid.length;
+        if (window < 2 || n < window)
+        {
+            return new SignalResult(Signal.HOLD, 0.0, System.currentTimeMillis());
+        }
+
+        int start = n - window;
+        double sum = 0.0;
+        for (int i = start; i < n; i++)
+        {
+            sum += mid[i];
+        }
+        double mean = sum / window;
+
+        double varSum = 0.0;
+        for (int i = start; i < n; i++)
+        {
+            double d = mid[i] - mean;
+            varSum += d * d;
+        }
+        double std = Math.sqrt(varSum / (window - 1));
+        double currentPrice = mid[n - 1];
+
+        if (std <= 0 || Double.isNaN(std))
+        {
+            return finalizeWithSpreadPenalty(Signal.HOLD, 0.0, candles, currentPrice);
+        }
+
+        double z = (currentPrice - mean) / std;
+        Signal dominant;
+        if (z < 0)
+        {
+            dominant = Signal.BUY;
+        }
+        else if (z > 0)
+        {
+            dominant = Signal.SELL;
+        }
+        else
+        {
+            dominant = Signal.HOLD;
+        }
+
+        double rawConf = Math.min(Math.abs(z) / ZSCORE_CAP, 1.0);
+        return finalizeWithSpreadPenalty(dominant, rawConf, candles, currentPrice);
+    }
+
+    private static SignalResult finalizeWithSpreadPenalty(
+        Signal dominant, double rawConf01, List<Candle> candles, double latestMid)
+    {
         Candle latest = candles.get(candles.size() - 1);
-        double spread = (latest.getHigh() - latest.getLow()) / latestMid;
-        // Penalise up to 50% for a 10%+ spread
+        double spread = latestMid > 0 ? (latest.getHigh() - latest.getLow()) / latestMid : 0.0;
         double spreadPenalty = Math.min(spread * 5.0, 0.5);
 
-        double finalConf = rawConf * (1.0 - spreadPenalty) * 100.0;
+        double finalConf = rawConf01 * (1.0 - spreadPenalty) * 100.0;
         finalConf = Math.max(0, Math.min(100, finalConf));
 
         return new SignalResult(dominant, finalConf, System.currentTimeMillis());
     }
 
-    /** Compute mid prices array from candle list. */
     private double[] midPrices(List<Candle> candles)
     {
         double[] mid = new double[candles.size()];
@@ -307,13 +472,82 @@ public class PriceAnalysisService
         return mid;
     }
 
-    /**
-     * Exponential Moving Average of the last {@code period} values.
-     * Uses a standard smoothing factor k = 2 / (period + 1).
-     */
+    private static double minMid(double[] mid)
+    {
+        double m = mid[0];
+        for (int i = 1; i < mid.length; i++)
+        {
+            if (mid[i] < m)
+            {
+                m = mid[i];
+            }
+        }
+        return m;
+    }
+
+    private static double maxMid(double[] mid)
+    {
+        double m = mid[0];
+        for (int i = 1; i < mid.length; i++)
+        {
+            if (mid[i] > m)
+            {
+                m = mid[i];
+            }
+        }
+        return m;
+    }
+
+    private static VelocityResult priceVelocity(double[] mid)
+    {
+        int n = mid.length;
+        int recentLen = Math.max(1, n / 4);
+        int recentStart = n - recentLen;
+        double recentSum = 0.0;
+        for (int i = recentStart; i < n; i++)
+        {
+            recentSum += mid[i];
+        }
+        double recentAvg = recentSum / recentLen;
+
+        int olderStart = n / 2;
+        int olderEnd = (3 * n) / 4;
+        double olderAvg;
+        if (olderEnd <= olderStart)
+        {
+            olderAvg = recentAvg;
+        }
+        else
+        {
+            double olderSum = 0.0;
+            int count = 0;
+            for (int i = olderStart; i < olderEnd; i++)
+            {
+                olderSum += mid[i];
+                count++;
+            }
+            olderAvg = count > 0 ? olderSum / count : recentAvg;
+        }
+
+        if (olderAvg <= 0)
+        {
+            return VelocityResult.neutral();
+        }
+        double velocity = (recentAvg - olderAvg) / olderAvg;
+        if (velocity < 0)
+        {
+            return new VelocityResult(Signal.BUY, Math.min(Math.abs(velocity) * 8.0, 1.0));
+        }
+        if (velocity > 0)
+        {
+            return new VelocityResult(Signal.SELL, Math.min(Math.abs(velocity) * 8.0, 1.0));
+        }
+        return VelocityResult.neutral();
+    }
+
     private double ema(double[] prices, int period)
     {
-        int start = Math.max(0, prices.length - period * 3); // warm-up window
+        int start = Math.max(0, prices.length - period * 3);
         double k = 2.0 / (period + 1);
         double emaVal = prices[start];
         for (int i = start + 1; i < prices.length; i++)
@@ -323,10 +557,6 @@ public class PriceAnalysisService
         return emaVal;
     }
 
-    /**
-     * Wilder's RSI over the last {@code period + 1} values.
-     * Returns a value in [0, 100].
-     */
     private double rsi(double[] prices, int period)
     {
         int len = prices.length;
@@ -335,7 +565,6 @@ public class PriceAnalysisService
         double avgGain = 0;
         double avgLoss = 0;
 
-        // Initial averages over first 'period' changes
         int initEnd = Math.min(start + period, len - 1);
         for (int i = start + 1; i <= initEnd; i++)
         {
@@ -352,7 +581,6 @@ public class PriceAnalysisService
         avgGain /= period;
         avgLoss /= period;
 
-        // Wilder smoothing for remaining values
         for (int i = initEnd + 1; i < len; i++)
         {
             double change = prices[i] - prices[i - 1];
@@ -370,10 +598,6 @@ public class PriceAnalysisService
         return 100.0 - (100.0 / (1.0 + rs));
     }
 
-    /**
-     * Volume-Weighted Average Price over the last {@code window} candles.
-     * Uses (high+low)/2 as the typical price proxy.
-     */
     private double vwap(List<Candle> candles, int window)
     {
         int start = Math.max(0, candles.size() - window);
@@ -391,7 +615,6 @@ public class PriceAnalysisService
 
         if (sumVol == 0)
         {
-            // Fall back to simple average if no volume data
             double sum = 0;
             for (int i = start; i < candles.size(); i++)
             {
@@ -404,9 +627,32 @@ public class PriceAnalysisService
         return sumPV / sumVol;
     }
 
-    // -------------------------------------------------------------------------
-    // Inner data class
-    // -------------------------------------------------------------------------
+    private static final class VelocityResult
+    {
+        private final Signal signal;
+        private final double confidence;
+
+        private VelocityResult(Signal signal, double confidence)
+        {
+            this.signal = signal;
+            this.confidence = confidence;
+        }
+
+        static VelocityResult neutral()
+        {
+            return new VelocityResult(null, 0.0);
+        }
+
+        Signal getSignal()
+        {
+            return signal;
+        }
+
+        double getConfidence()
+        {
+            return confidence;
+        }
+    }
 
     @lombok.Value
     private static class Candle

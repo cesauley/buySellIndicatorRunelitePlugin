@@ -65,6 +65,139 @@ public interface BuySellIndicatorConfig extends Config
         return 5;
     }
 
+    @ConfigItem(
+        keyName = "analysisBundle",
+        name = "Analysis bundle",
+        description = "Combines playstyle (flipping vs long-term merchanting), price model, and Wiki API bar size."
+            + " Flipping bundles use short horizons for round-trips; merchanting bundles use daily bars for buy-and-hold context."
+            + " BUY/SELL meaning depends on the bundle — see plugin README.",
+        position = 5
+    )
+    default AnalysisBundle analysisBundle()
+    {
+        return AnalysisBundle.FLIPPING_WEEK_FLIP;
+    }
+
+    enum Playstyle
+    {
+        FLIPPING,
+        MERCHANTING
+    }
+
+    enum AnalysisModel
+    {
+        /** Range position + VWAP deviation + contrarian velocity */
+        FLIP,
+        /** EMA crossover + RSI-14 + short vs long VWAP trend (momentum-style) */
+        CLASSIC_TA,
+        /** Rolling z-score vs SMA on mids */
+        ZSCORE
+    }
+
+    enum AnalysisBundle
+    {
+        FLIPPING_DAY_FLIP(
+            Playstyle.FLIPPING,
+            AnalysisModel.FLIP,
+            "Flipping — day (5m), mean reversion",
+            "5m",
+            288,
+            0),
+        FLIPPING_WEEK_FLIP(
+            Playstyle.FLIPPING,
+            AnalysisModel.FLIP,
+            "Flipping — week (1h), mean reversion",
+            "1h",
+            168,
+            0),
+        FLIPPING_DAY_CLASSIC_TA(
+            Playstyle.FLIPPING,
+            AnalysisModel.CLASSIC_TA,
+            "Flipping — day (5m), classic TA",
+            "5m",
+            288,
+            0),
+        MERCHANTING_MONTHS_FLIP(
+            Playstyle.MERCHANTING,
+            AnalysisModel.FLIP,
+            "Merchanting — months (daily), mean reversion",
+            "24h",
+            180,
+            0),
+        MERCHANTING_YEAR_FLIP(
+            Playstyle.MERCHANTING,
+            AnalysisModel.FLIP,
+            "Merchanting — year (daily), mean reversion",
+            "24h",
+            365,
+            0),
+        MERCHANTING_ZSCORE(
+            Playstyle.MERCHANTING,
+            AnalysisModel.ZSCORE,
+            "Merchanting — z-score (daily, ~3 mo)",
+            "24h",
+            95,
+            20),
+        MERCHANTING_SWING_CLASSIC_TA(
+            Playstyle.MERCHANTING,
+            AnalysisModel.CLASSIC_TA,
+            "Merchanting — swing (daily), classic TA",
+            "24h",
+            180,
+            0);
+
+        private final Playstyle playstyle;
+        private final AnalysisModel model;
+        private final String label;
+        private final String apiTimestep;
+        private final int maxCandles;
+        /** SMA window for ZSCORE model; ignored otherwise */
+        private final int zScoreSmaPeriod;
+
+        AnalysisBundle(Playstyle playstyle, AnalysisModel model, String label,
+            String apiTimestep, int maxCandles, int zScoreSmaPeriod)
+        {
+            this.playstyle = playstyle;
+            this.model = model;
+            this.label = label;
+            this.apiTimestep = apiTimestep;
+            this.maxCandles = maxCandles;
+            this.zScoreSmaPeriod = zScoreSmaPeriod;
+        }
+
+        @Override
+        public String toString()
+        {
+            return label;
+        }
+
+        public Playstyle getPlaystyle()
+        {
+            return playstyle;
+        }
+
+        public AnalysisModel getModel()
+        {
+            return model;
+        }
+
+        public String getApiTimestep()
+        {
+            return apiTimestep;
+        }
+
+        public int getMaxCandles()
+        {
+            return maxCandles;
+        }
+
+        /** Used only when {@link #getModel()} is {@link AnalysisModel#ZSCORE} */
+        public int getZScoreSmaPeriod()
+        {
+            return zScoreSmaPeriod;
+        }
+    }
+
     enum FontSize
     {
         SMALL(9),
