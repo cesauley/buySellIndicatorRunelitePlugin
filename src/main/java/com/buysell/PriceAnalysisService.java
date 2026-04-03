@@ -165,15 +165,31 @@ public class PriceAnalysisService
             }
             else
             {
-                result = analyse(candles, bundle);
-                log.debug("Analysis result itemId={} signal={} confidence={} bundle={}",
-                    itemId, result.getSignal(), result.getConfidence(), bundle);
-                if (result.getConfidence() < config.minConfidence())
+                Candle last = candles.get(candles.size() - 1);
+                double latestMid = (last.getHigh() + last.getLow()) / 2.0;
+                int minPrice = config.minItemPrice();
+                int maxPrice = config.maxItemPrice();
+                boolean belowMin = minPrice > 0 && latestMid < minPrice;
+                boolean aboveMax = maxPrice > 0 && latestMid > maxPrice;
+
+                if (belowMin || aboveMax)
                 {
-                    log.debug("Downgrading to HOLD (below minConfidence) itemId={} confidence={} minConfidence={}",
-                        itemId, result.getConfidence(), config.minConfidence());
-                    result = new SignalResult(Signal.HOLD, result.getConfidence(),
-                        result.getComputedAtMs());
+                    log.debug("Item {} outside price threshold latestMid={} minPrice={} maxPrice={}",
+                        itemId, latestMid, minPrice, maxPrice);
+                    result = new SignalResult(Signal.FILTERED, 0.0, System.currentTimeMillis());
+                }
+                else
+                {
+                    result = analyse(candles, bundle);
+                    log.debug("Analysis result itemId={} signal={} confidence={} bundle={}",
+                        itemId, result.getSignal(), result.getConfidence(), bundle);
+                    if (result.getConfidence() < config.minConfidence())
+                    {
+                        log.debug("Downgrading to HOLD (below minConfidence) itemId={} confidence={} minConfidence={}",
+                            itemId, result.getConfidence(), config.minConfidence());
+                        result = new SignalResult(Signal.HOLD, result.getConfidence(),
+                            result.getComputedAtMs());
+                    }
                 }
             }
 

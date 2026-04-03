@@ -7,5 +7,7 @@ public enum Signal
 {
     BUY,
     SELL,
-    HOLD
+    HOLD,
+    /** Item price is outside the configured min/max threshold; overlay is skipped. */
+    FILTERED
 }

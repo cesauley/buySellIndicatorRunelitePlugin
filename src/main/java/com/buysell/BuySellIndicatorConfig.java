@@ -43,10 +43,32 @@ public interface BuySellIndicatorConfig extends Config
     }
 
     @ConfigItem(
+        keyName = "minItemPrice",
+        name = "Min Item Price (coins)",
+        description = "Skip overlay for items whose current price is below this value. Set to 0 to disable.",
+        position = 3
+    )
+    default int minItemPrice()
+    {
+        return 50;
+    }
+
+    @ConfigItem(
+        keyName = "maxItemPrice",
+        name = "Max Item Price (coins)",
+        description = "Skip overlay for items whose current price is above this value. Set to 0 to disable.",
+        position = 4
+    )
+    default int maxItemPrice()
+    {
+        return 1_000_000_000;
+    }
+
+    @ConfigItem(
         keyName = "fontSize",
         name = "Font Size",
         description = "Size of the signal text drawn on items",
-        position = 3
+        position = 5
     )
     default FontSize fontSize()
     {
@@ -57,7 +79,7 @@ public interface BuySellIndicatorConfig extends Config
         keyName = "cacheMinutes",
         name = "Cache Duration (minutes)",
         description = "How many minutes to cache price analysis before refreshing. Lower = more API requests.",
-        position = 4
+        position = 6
     )
     @Range(min = 1, max = 60)
     default int cacheMinutes()
@@ -71,7 +93,7 @@ public interface BuySellIndicatorConfig extends Config
         description = "Combines playstyle (flipping vs long-term merchanting), price model, and Wiki API bar size."
             + " Flipping bundles use short horizons for round-trips; merchanting bundles use daily bars for buy-and-hold context."
             + " BUY/SELL meaning depends on the bundle — see plugin README.",
-        position = 5
+        position = 7
     )
     default AnalysisBundle analysisBundle()
     {
@@ -251,7 +273,7 @@ public interface BuySellIndicatorConfig extends Config
         keyName = "enableBankSignalFilter",
         name = "Bank signal filter button",
         description = "Show a button on the bank interface to filter items by BUY/SELL signal (sorted by confidence).",
-        position = 6
+        position = 8
     )
     default boolean enableBankSignalFilter()
     {

@@ -1,5 +1,6 @@
 package com.buysell;
 
+import com.buysell.model.Signal;
 import com.buysell.model.SignalResult;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ItemComposition;
@@ -89,6 +90,11 @@ public class BuySellIndicatorOverlay extends WidgetItemOverlay
             log.trace("renderItemOverlay loading canonicalId={}", canonicalId);
             // Still loading — show a subtle ellipsis
             drawLoadingDot(graphics, bounds);
+            return;
+        }
+
+        if (result.getSignal() == Signal.FILTERED)
+        {
             return;
         }
 

@@ -82,6 +82,12 @@ public class BuySellIndicatorPlugin extends Plugin
             log.debug("Analysis bundle changed; clearing price cache");
             analysisService.clearCache();
         }
+
+        if ("minItemPrice".equals(event.getKey()) || "maxItemPrice".equals(event.getKey()))
+        {
+            log.debug("Price threshold changed; clearing price cache");
+            analysisService.clearCache();
+        }
     }
 
     @Provides
