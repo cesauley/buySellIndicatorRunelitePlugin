@@ -144,6 +144,30 @@ gradlew.bat run
 Either way, the RuneLite client will launch in **developer mode** with the
 Buy/Sell Indicator plugin already loaded.
 
+### Run unit tests
+
+From the project root:
+
+```bash
+./gradlew test
+```
+
+On Windows:
+
+```cmd
+gradlew.bat test
+```
+
+To recompile everything before running tests:
+
+```bash
+./gradlew clean test
+```
+
+On Windows: `gradlew.bat clean test`.
+
+In IntelliJ IDEA, open a test class under `src/test/java/com/buysell/` and use the green **Run** icon next to the class or method, or right-click the `test` folder → **Run 'All Tests'**.
+
 ### 6. Log in and test
 
 1. Log in to **Old School RuneScape** (regular account or the official RuneLite
@@ -151,6 +175,14 @@ Buy/Sell Indicator plugin already loaded.
 2. **Open your inventory** – after a few seconds you will see BUY / SELL / HOLD
    labels appear on each item.
 3. **Open your bank** – the same signals appear on all banked items.
+
+#### Bank signal filter
+
+When **Bank signal filter button** is enabled in the plugin config (default: on), a small **25×25** bank-style button appears **near the top-right** (just left of where plugins such as [Quest Helper](https://github.com/Zoinkwiz/quest-helper) draw their bank icon). The label shows **–** (off), **B**, **S**, or **BS** for BUY+SELL.
+
+- Click **Cycle filter** on that control to cycle modes: **OFF** → **BUY** → **SELL** → **B+S** → **OFF**.
+- In any active filter mode, the bank shows only items that match the mode and your **Minimum confidence (%)** threshold; visible rows are **sorted by confidence** (highest first). **B+S** mixes BUY and SELL items in one list ordered only by confidence.
+- The filter uses **cached** analysis only. Items that have not been analyzed yet (no cached signal) are treated as non-matching until the overlay or another path has populated the cache.
 
 > First-time signals may take a few seconds per item while the API fetches
 > timeseries data (depth depends on your **Analysis bundle**). A small `…` dot
@@ -168,6 +200,7 @@ In the RuneLite sidebar (wrench icon → search "Buy/Sell"), you can configure:
 | Font Size | Small | Small / Medium / Large |
 | Cache Duration (minutes) | 5 | How long to cache price data |
 | Analysis bundle | Flipping — week (1h), mean reversion | Playstyle + bar size + model (see above) |
+| Bank signal filter button | ✓ | Show the in-bank filter button (– / B / S / BS) to filter by BUY / SELL / both (sorted by confidence) |
 
 ---
 
@@ -191,6 +224,9 @@ In the RuneLite sidebar (wrench icon → search "Buy/Sell"), you can configure:
 - Ensure your JDK is version 11 or higher. JDK 8 is not supported by RuneLite.
 - Run `./gradlew run --info` to see verbose output and identify the root cause.
 
+**Bank filter button missing**
+- In the Buy/Sell Indicator config, ensure **Bank signal filter button** is enabled, then close and reopen the bank. With **resizable** mode or custom UI scale, the control stays near the top-right of the bank frame; if it is still missing, check that another plugin is not covering that region.
+
 ---
 
 ## Project Structure
@@ -206,6 +242,7 @@ buySellIndicatorPlugin/
     │   ├── BuySellIndicatorConfig.java  Config panel interface
     │   ├── BuySellIndicatorOverlay.java WidgetItemOverlay renderer
     │   ├── PriceAnalysisService.java    API + bundle dispatch + cache
+    │   ├── BankFilterManager.java       In-bank filter UI + search layout hooks
     │   └── model/
     │       ├── Signal.java              BUY / SELL / HOLD enum
     │       └── SignalResult.java        Signal + confidence data class

@@ -216,4 +216,45 @@ public interface BuySellIndicatorConfig extends Config
             return pts;
         }
     }
+
+    /**
+     * Runtime bank filter mode (cycled by the in-bank button). Declared on the config interface for
+     * discoverability; the active mode is not persisted across sessions.
+     */
+    enum FilterMode
+    {
+        OFF("\u2013"),
+        BUY_ONLY("B"),
+        SELL_ONLY("S"),
+        BUY_AND_SELL("BS");
+
+        private final String buttonLabel;
+
+        FilterMode(String buttonLabel)
+        {
+            this.buttonLabel = buttonLabel;
+        }
+
+        public String getButtonLabel()
+        {
+            return buttonLabel;
+        }
+
+        public FilterMode next()
+        {
+            FilterMode[] vals = values();
+            return vals[(ordinal() + 1) % vals.length];
+        }
+    }
+
+    @ConfigItem(
+        keyName = "enableBankSignalFilter",
+        name = "Bank signal filter button",
+        description = "Show a button on the bank interface to filter items by BUY/SELL signal (sorted by confidence).",
+        position = 6
+    )
+    default boolean enableBankSignalFilter()
+    {
+        return true;
+    }
 }

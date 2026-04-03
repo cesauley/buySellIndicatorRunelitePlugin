@@ -43,10 +43,14 @@ public class BuySellIndicatorPlugin extends Plugin
     @Inject
     private PriceAnalysisService analysisService;
 
+    @Inject
+    private BankFilterManager bankFilterManager;
+
     @Override
     protected void startUp()
     {
         eventBus.register(this);
+        eventBus.register(bankFilterManager);
         overlayManager.add(overlay);
         log.info("Buy/Sell Indicator plugin started");
     }
@@ -54,6 +58,8 @@ public class BuySellIndicatorPlugin extends Plugin
     @Override
     protected void shutDown()
     {
+        eventBus.unregister(bankFilterManager);
+        bankFilterManager.reset();
         eventBus.unregister(this);
         overlayManager.remove(overlay);
         analysisService.clearCache();

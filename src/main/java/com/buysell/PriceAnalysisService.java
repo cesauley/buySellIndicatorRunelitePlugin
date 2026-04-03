@@ -6,6 +6,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -105,6 +108,15 @@ public class PriceAnalysisService
         return cached;
     }
 
+    /**
+     * Returns a cached analysis result without scheduling a fetch. Used by bank filtering so the
+     * client thread never triggers network work from script callbacks.
+     */
+    public SignalResult getCachedSignal(int itemId)
+    {
+        return cache.get(itemId);
+    }
+
     public void clearCache()
     {
         cache.clear();
@@ -186,12 +198,17 @@ public class PriceAnalysisService
         }
     }
 
-    private List<Candle> parseCandles(String json)
+    List<Candle> parseCandles(String json)
     {
         JsonObject root = new JsonParser().parse(json).getAsJsonObject();
-        JsonArray data = root.getAsJsonArray("data");
+        JsonElement dataEl = root.get("data");
+        if (dataEl == null || !dataEl.isJsonArray())
+        {
+            return null;
+        }
+        JsonArray data = dataEl.getAsJsonArray();
 
-        if (data == null || data.size() == 0)
+        if (data.size() == 0)
         {
             return null;
         }
@@ -228,7 +245,7 @@ public class PriceAnalysisService
         return candles.isEmpty() ? null : candles;
     }
 
-    private SignalResult analyse(List<Candle> candles, BuySellIndicatorConfig.AnalysisBundle bundle)
+    SignalResult analyse(List<Candle> candles, BuySellIndicatorConfig.AnalysisBundle bundle)
     {
         int effectiveMax = Math.min(WIKI_TIMESERIES_MAX_POINTS, bundle.getMaxCandles());
         if (candles.size() > effectiveMax)
@@ -249,7 +266,7 @@ public class PriceAnalysisService
         }
     }
 
-    private SignalResult analyseFlip(List<Candle> candles)
+    SignalResult analyseFlip(List<Candle> candles)
     {
         double[] mid = midPrices(candles);
         int n = mid.length;
@@ -324,7 +341,7 @@ public class PriceAnalysisService
         return finalizeWithSpreadPenalty(dominant, rawConf, candles, currentPrice);
     }
 
-    private SignalResult analyseClassicTa(List<Candle> candles)
+    SignalResult analyseClassicTa(List<Candle> candles)
     {
         double[] mid = midPrices(candles);
 
@@ -398,7 +415,7 @@ public class PriceAnalysisService
         return finalizeWithSpreadPenalty(dominant, rawConf, candles, currentPrice);
     }
 
-    private SignalResult analyseZScore(List<Candle> candles, int window)
+    SignalResult analyseZScore(List<Candle> candles, int window)
     {
         double[] mid = midPrices(candles);
         int n = mid.length;
@@ -654,8 +671,9 @@ public class PriceAnalysisService
         }
     }
 
-    @lombok.Value
-    private static class Candle
+    @Getter
+    @AllArgsConstructor(access = AccessLevel.PACKAGE)
+    static class Candle
     {
         double high;
         double low;
