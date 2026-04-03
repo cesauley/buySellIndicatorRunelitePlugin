@@ -98,7 +98,7 @@ public class PriceAnalysisService
 
         if (cached != null && (now - cached.getComputedAtMs()) < ttlMs)
         {
-            log.debug("getSignal cache hit itemId={} ageMs={} ttlMs={}",
+            log.trace("getSignal cache hit itemId={} ageMs={} ttlMs={}",
                 itemId, now - cached.getComputedAtMs(), ttlMs);
             return cached;
         }
