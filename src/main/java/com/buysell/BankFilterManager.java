@@ -91,6 +91,7 @@ public class BankFilterManager
 
     public void reset()
     {
+        log.debug("reset clearing bank filter state");
         activeMode = BuySellIndicatorConfig.FilterMode.OFF;
         if (filterBackground != null)
         {
@@ -118,6 +119,7 @@ public class BankFilterManager
         {
             return;
         }
+        log.debug("onWidgetLoaded BANKMAIN; scheduling filter button inject");
         clientThread.invokeLater(this::injectOrRefreshButton);
     }
 
@@ -128,6 +130,7 @@ public class BankFilterManager
         {
             return;
         }
+        log.debug("onWidgetClosed BANKMAIN; clearing filter widget references");
         filterBackground = null;
         filterLabel = null;
     }
@@ -149,6 +152,7 @@ public class BankFilterManager
         }
         if (filterBackground == null || filterBackground.getParent() != universe)
         {
+            log.debug("onGameTick filter button missing or wrong parent; re-injecting");
             injectOrRefreshButton();
         }
     }
@@ -162,6 +166,7 @@ public class BankFilterManager
         }
         if ("enableBankSignalFilter".equals(ev.getKey()) || "minConfidence".equals(ev.getKey()))
         {
+            log.debug("onConfigChanged key={} oldValue={} newValue={}", ev.getKey(), ev.getOldValue(), ev.getNewValue());
             clientThread.invokeLater(() ->
             {
                 if (!config.enableBankSignalFilter() && activeMode != BuySellIndicatorConfig.FilterMode.OFF)
@@ -179,6 +184,7 @@ public class BankFilterManager
 
     private void cycleModeToOff()
     {
+        log.debug("cycleModeToOff resetting filter mode to OFF");
         activeMode = BuySellIndicatorConfig.FilterMode.OFF;
         if (filterBackground != null && filterLabel != null)
         {
@@ -197,6 +203,7 @@ public class BankFilterManager
         }
 
         String name = event.getEventName();
+        log.trace("onScriptCallbackEvent name={} activeMode={}", name, activeMode);
         if ("getSearchingTagTab".equals(name))
         {
             if (activeMode != BuySellIndicatorConfig.FilterMode.OFF)
@@ -221,6 +228,7 @@ public class BankFilterManager
         int[] intStack = client.getIntStack();
         int intStackSize = client.getIntStackSize();
         int rawId = intStack[intStackSize - 1];
+        log.trace("onScriptCallbackEvent bankSearchFilter rawId={}", rawId);
         if (rawId < 0)
         {
             return;
@@ -228,6 +236,7 @@ public class BankFilterManager
 
         int canonicalId = itemManager.canonicalize(rawId);
         boolean include = matchesActiveFilter(canonicalId);
+        log.trace("onScriptCallbackEvent bankSearchFilter canonicalId={} include={}", canonicalId, include);
         intStack[intStackSize - 2] = include ? 1 : 0;
     }
 
@@ -239,7 +248,12 @@ public class BankFilterManager
             return;
         }
 
-        if (event.getScriptId() == ScriptID.BANKMAIN_SEARCHING)
+        int scriptId = event.getScriptId();
+        if (scriptId == ScriptID.BANKMAIN_SEARCHING || scriptId == ScriptID.BANKMAIN_FINISHBUILDING)
+        {
+            log.trace("onScriptPostFired scriptId={}", scriptId);
+        }
+        if (scriptId == ScriptID.BANKMAIN_SEARCHING)
         {
             if (activeMode != BuySellIndicatorConfig.FilterMode.OFF)
             {
@@ -250,7 +264,7 @@ public class BankFilterManager
             return;
         }
 
-        if (event.getScriptId() != ScriptID.BANKMAIN_FINISHBUILDING)
+        if (scriptId != ScriptID.BANKMAIN_FINISHBUILDING)
         {
             return;
         }
@@ -371,6 +385,7 @@ public class BankFilterManager
     {
         if (!config.enableBankSignalFilter())
         {
+            log.debug("injectOrRefreshButton bank signal filter disabled; hiding widgets");
             if (filterBackground != null)
             {
                 filterBackground.setHidden(true);
@@ -385,12 +400,17 @@ public class BankFilterManager
         Widget universe = client.getWidget(InterfaceID.Bankmain.UNIVERSE);
         if (universe == null || universe.isHidden())
         {
+            if (filterBackground != null && !filterBackground.isHidden())
+            {
+                log.error("injectOrRefreshButton UNIVERSE null or hidden but filter widget still visible; inconsistent state");
+            }
             return;
         }
 
         if (filterBackground == null || filterLabel == null
             || filterBackground.getParent() != universe || filterLabel.getParent() != universe)
         {
+            log.debug("injectOrRefreshButton creating new filter widgets on UNIVERSE");
             filterBackground = universe.createChild(-1, WidgetType.GRAPHIC);
             filterBackground.setName(FILTER_WIDGET_NAME);
             filterBackground.setOriginalWidth(FILTER_BG_W);
@@ -412,6 +432,10 @@ public class BankFilterManager
             applyFilterVisuals();
             filterBackground.revalidate();
             filterLabel.revalidate();
+        }
+        else
+        {
+            log.debug("injectOrRefreshButton refreshing existing filter widgets");
         }
 
         filterBackground.setHidden(false);
@@ -450,7 +474,9 @@ public class BankFilterManager
             return;
         }
 
+        BuySellIndicatorConfig.FilterMode previous = activeMode;
         activeMode = activeMode.next();
+        log.debug("cycleMode {} -> {}", previous, activeMode);
         if (filterBackground != null && filterLabel != null)
         {
             applyFilterVisuals();
@@ -563,6 +589,7 @@ public class BankFilterManager
             w.setOriginalY(sortedYs[i]);
             w.revalidate();
         }
+        log.debug("sortVisibleItemsByConfidence reordered {} visible bank items", items.size());
     }
 
     private double getConfidence(int canonicalId)
@@ -576,27 +603,38 @@ public class BankFilterManager
         ItemComposition def = itemManager.getItemComposition(canonicalItemId);
         if (def == null || !def.isTradeable())
         {
+            log.trace("matchesActiveFilter canonicalItemId={} skip non-tradeable or null def", canonicalItemId);
             return false;
         }
 
         SignalResult result = analysisService.getCachedSignal(canonicalItemId);
         if (result == null || result.getConfidence() < config.minConfidence())
         {
+            log.trace("matchesActiveFilter canonicalItemId={} skip no cached signal or below minConfidence result={} minConfidence={}",
+                canonicalItemId, result, config.minConfidence());
             return false;
         }
 
         Signal sig = result.getSignal();
+        boolean match;
         switch (activeMode)
         {
             case BUY_ONLY:
-                return sig == Signal.BUY;
+                match = sig == Signal.BUY;
+                break;
             case SELL_ONLY:
-                return sig == Signal.SELL;
+                match = sig == Signal.SELL;
+                break;
             case BUY_AND_SELL:
-                return sig == Signal.BUY || sig == Signal.SELL;
+                match = sig == Signal.BUY || sig == Signal.SELL;
+                break;
             default:
-                return false;
+                match = false;
+                break;
         }
+        log.trace("matchesActiveFilter canonicalItemId={} signal={} confidence={} activeMode={} match={}",
+            canonicalItemId, sig, result.getConfidence(), activeMode, match);
+        return match;
     }
 
 }

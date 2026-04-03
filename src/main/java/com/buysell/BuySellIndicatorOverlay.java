@@ -1,6 +1,7 @@
 package com.buysell;
 
 import com.buysell.model.SignalResult;
+import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.widgets.WidgetItem;
 import net.runelite.client.game.ItemManager;
@@ -25,6 +26,7 @@ import java.awt.RenderingHints;
  * no API fetch). Noted and placeholder variants are resolved via
  * {@link ItemManager#canonicalize(int)}.
  */
+@Slf4j
 public class BuySellIndicatorOverlay extends WidgetItemOverlay
 {
     private static final Color COLOR_BUY  = new Color(0, 220, 80);
@@ -63,9 +65,11 @@ public class BuySellIndicatorOverlay extends WidgetItemOverlay
         // the plugin wiring that registers/unregisters the overlay based on config.
 
         int canonicalId = itemManager.canonicalize(itemId);
+        log.trace("renderItemOverlay itemId={} canonicalId={}", itemId, canonicalId);
         ItemComposition def = itemManager.getItemComposition(canonicalId);
         if (!def.isTradeable())
         {
+            log.trace("renderItemOverlay skip non-tradeable canonicalId={}", canonicalId);
             return;
         }
 
@@ -82,6 +86,7 @@ public class BuySellIndicatorOverlay extends WidgetItemOverlay
 
         if (result == null)
         {
+            log.trace("renderItemOverlay loading canonicalId={}", canonicalId);
             // Still loading — show a subtle ellipsis
             drawLoadingDot(graphics, bounds);
             return;
@@ -119,6 +124,8 @@ public class BuySellIndicatorOverlay extends WidgetItemOverlay
 
         drawShadowedString(graphics, confText,   confFont,   x, yConf,   COLOR_CONF);
         drawShadowedString(graphics, signalText, signalFont, x, ySignal, signalColor);
+        log.trace("renderItemOverlay drawn canonicalId={} signal={} confidence={}",
+            canonicalId, result.getSignal(), result.getConfidence());
     }
 
     private void drawShadowedString(

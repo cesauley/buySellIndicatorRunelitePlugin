@@ -94,15 +94,23 @@ public class PriceAnalysisService
     {
         SignalResult cached = cache.get(itemId);
         long ttlMs = (long) config.cacheMinutes() * 60_000L;
+        long now = System.currentTimeMillis();
 
-        if (cached != null && (System.currentTimeMillis() - cached.getComputedAtMs()) < ttlMs)
+        if (cached != null && (now - cached.getComputedAtMs()) < ttlMs)
         {
+            log.debug("getSignal cache hit itemId={} ageMs={} ttlMs={}",
+                itemId, now - cached.getComputedAtMs(), ttlMs);
             return cached;
         }
 
         if (inFlight.add(itemId))
         {
+            log.trace("getSignal cache miss, scheduling fetch itemId={}", itemId);
             executor.submit(() -> fetchAndAnalyse(itemId));
+        }
+        else
+        {
+            log.trace("getSignal fetch already in-flight itemId={}", itemId);
         }
 
         return cached;
@@ -119,7 +127,9 @@ public class PriceAnalysisService
 
     public void clearCache()
     {
+        int n = cache.size();
         cache.clear();
+        log.debug("clearCache removed {} entries", n);
     }
 
     private static int minCandlesRequired(BuySellIndicatorConfig.AnalysisBundle bundle)
@@ -156,14 +166,20 @@ public class PriceAnalysisService
             else
             {
                 result = analyse(candles, bundle);
+                log.debug("Analysis result itemId={} signal={} confidence={} bundle={}",
+                    itemId, result.getSignal(), result.getConfidence(), bundle);
                 if (result.getConfidence() < config.minConfidence())
                 {
+                    log.debug("Downgrading to HOLD (below minConfidence) itemId={} confidence={} minConfidence={}",
+                        itemId, result.getConfidence(), config.minConfidence());
                     result = new SignalResult(Signal.HOLD, result.getConfidence(),
                         result.getComputedAtMs());
                 }
             }
 
             cache.put(itemId, result);
+            log.debug("Cached signal itemId={} signal={} confidence={}",
+                itemId, result.getSignal(), result.getConfidence());
         }
         catch (Exception e)
         {
@@ -180,6 +196,7 @@ public class PriceAnalysisService
     {
         String timestep = config.analysisBundle().getApiTimestep();
         String url = BASE_URL + "/timeseries?id=" + itemId + "&timestep=" + timestep;
+        log.debug("fetchTimeseries GET {}", url);
         Request request = new Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
@@ -207,6 +224,7 @@ public class PriceAnalysisService
             return null;
         }
         JsonArray data = dataEl.getAsJsonArray();
+        log.trace("parseCandles raw data array size={}", data.size());
 
         if (data.size() == 0)
         {
@@ -214,6 +232,7 @@ public class PriceAnalysisService
         }
 
         List<Candle> candles = new ArrayList<>(data.size());
+        int skipped = 0;
         for (JsonElement el : data)
         {
             JsonObject obj = el.getAsJsonObject();
@@ -226,6 +245,8 @@ public class PriceAnalysisService
             if (highEl == null || highEl.isJsonNull()
                 || lowEl == null || lowEl.isJsonNull())
             {
+                skipped++;
+                log.trace("parseCandles skipped candle (null high/low) skipCount={}", skipped);
                 continue;
             }
 
@@ -240,8 +261,15 @@ public class PriceAnalysisService
             {
                 candles.add(new Candle(high, low, highVol, lowVol));
             }
+            else
+            {
+                skipped++;
+                log.trace("parseCandles skipped candle (non-positive price) high={} low={} skipCount={}",
+                    high, low, skipped);
+            }
         }
 
+        log.trace("parseCandles parsed {} candles (skipped {})", candles.size(), skipped);
         return candles.isEmpty() ? null : candles;
     }
 
@@ -253,6 +281,9 @@ public class PriceAnalysisService
             candles = new ArrayList<>(candles.subList(candles.size() - effectiveMax, candles.size()));
         }
 
+        log.debug("analyse candleCount={} effectiveMax={} bundle={} model={}",
+            candles.size(), effectiveMax, bundle, bundle.getModel());
+
         switch (bundle.getModel())
         {
             case FLIP:
@@ -262,6 +293,7 @@ public class PriceAnalysisService
             case ZSCORE:
                 return analyseZScore(candles, bundle.getZScoreSmaPeriod());
             default:
+                log.error("Unhandled analysis model: {}", bundle.getModel());
                 throw new IllegalStateException("Unhandled model: " + bundle.getModel());
         }
     }
@@ -338,6 +370,8 @@ public class PriceAnalysisService
             rawConf = sellScore;
         }
 
+        log.trace("analyseFlip rangePos={} rangeConf={} vwapDev={} velSignal={} velConf={} buyScore={} sellScore={} dominant={} rawConf={}",
+            rangePos, rangeConf, vwapDev, velSignal, velConf, buyScore, sellScore, dominant, rawConf);
         return finalizeWithSpreadPenalty(dominant, rawConf, candles, currentPrice);
     }
 
@@ -412,6 +446,8 @@ public class PriceAnalysisService
         }
 
         double currentPrice = mid[mid.length - 1];
+        log.trace("analyseClassicTa emaFast={} emaSlow={} emaSignal={} emaConf={} rsi={} rsiSignal={} rsiConf={} vwapShort={} vwapLong={} vwapSignal={} vwapConf={} buyScore={} sellScore={} dominant={} rawConf={}",
+            emaFast, emaSlow, emaSignal, emaConf, rsi, rsiSignal, rsiConf, vwapShort, vwapLong, vwapSignal, vwapConf, buyScore, sellScore, dominant, rawConf);
         return finalizeWithSpreadPenalty(dominant, rawConf, candles, currentPrice);
     }
 
@@ -462,10 +498,12 @@ public class PriceAnalysisService
         }
 
         double rawConf = Math.min(Math.abs(z) / ZSCORE_CAP, 1.0);
+        log.trace("analyseZScore z={} mean={} std={} window={} dominant={} rawConf={}",
+            z, mean, std, window, dominant, rawConf);
         return finalizeWithSpreadPenalty(dominant, rawConf, candles, currentPrice);
     }
 
-    private static SignalResult finalizeWithSpreadPenalty(
+    private SignalResult finalizeWithSpreadPenalty(
         Signal dominant, double rawConf01, List<Candle> candles, double latestMid)
     {
         Candle latest = candles.get(candles.size() - 1);
@@ -475,6 +513,8 @@ public class PriceAnalysisService
         double finalConf = rawConf01 * (1.0 - spreadPenalty) * 100.0;
         finalConf = Math.max(0, Math.min(100, finalConf));
 
+        log.trace("finalizeWithSpreadPenalty dominant={} rawConf01={} latestMid={} spread={} spreadPenalty={} finalConf={}",
+            dominant, rawConf01, latestMid, spread, spreadPenalty, finalConf);
         return new SignalResult(dominant, finalConf, System.currentTimeMillis());
     }
 

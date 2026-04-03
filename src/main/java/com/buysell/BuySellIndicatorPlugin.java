@@ -69,8 +69,17 @@ public class BuySellIndicatorPlugin extends Plugin
     @Subscribe
     public void onConfigChanged(ConfigChanged event)
     {
-        if ("buysell".equals(event.getGroup()) && "analysisBundle".equals(event.getKey()))
+        if (!"buysell".equals(event.getGroup()))
         {
+            return;
+        }
+
+        log.debug("Config changed group={} key={} oldValue={} newValue={}",
+            event.getGroup(), event.getKey(), event.getOldValue(), event.getNewValue());
+
+        if ("analysisBundle".equals(event.getKey()))
+        {
+            log.debug("Analysis bundle changed; clearing price cache");
             analysisService.clearCache();
         }
     }
