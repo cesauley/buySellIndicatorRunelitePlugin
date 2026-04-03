@@ -520,17 +520,33 @@ public class BankFilterManager
                 items.add(w);
             }
         }
+
         if (items.size() < 2)
         {
             return;
         }
 
+        // Collect and sort slot positions in reading order (top→bottom, left→right) so that
+        // even if this method runs multiple times the same canonical slots are always assigned,
+        // regardless of the current DOM child order.
         int[] xs = new int[items.size()];
         int[] ys = new int[items.size()];
         for (int i = 0; i < items.size(); i++)
         {
             xs[i] = items.get(i).getOriginalX();
             ys[i] = items.get(i).getOriginalY();
+        }
+        // Sort the slot arrays into reading order independently of DOM child order.
+        // We build index array sorted by (y asc, x asc) then reorder xs/ys.
+        Integer[] slotOrder = new Integer[items.size()];
+        for (int i = 0; i < slotOrder.length; i++) slotOrder[i] = i;
+        java.util.Arrays.sort(slotOrder, (a, b) -> ys[a] != ys[b] ? Integer.compare(ys[a], ys[b]) : Integer.compare(xs[a], xs[b]));
+        int[] sortedXs = new int[items.size()];
+        int[] sortedYs = new int[items.size()];
+        for (int i = 0; i < slotOrder.length; i++)
+        {
+            sortedXs[i] = xs[slotOrder[i]];
+            sortedYs[i] = ys[slotOrder[i]];
         }
 
         items.sort((a, b) ->
@@ -543,8 +559,8 @@ public class BankFilterManager
         for (int i = 0; i < items.size(); i++)
         {
             Widget w = items.get(i);
-            w.setOriginalX(xs[i]);
-            w.setOriginalY(ys[i]);
+            w.setOriginalX(sortedXs[i]);
+            w.setOriginalY(sortedYs[i]);
             w.revalidate();
         }
     }
