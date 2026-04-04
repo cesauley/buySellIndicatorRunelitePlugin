@@ -10,6 +10,7 @@ import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.ItemManager;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -71,6 +72,7 @@ public class PriceAnalysisService
 
     private final OkHttpClient httpClient;
     private final BuySellIndicatorConfig config;
+    private final ItemManager itemManager;
 
     private final Map<Integer, SignalResult> cache = new ConcurrentHashMap<>();
 
@@ -84,14 +86,21 @@ public class PriceAnalysisService
     });
 
     @Inject
-    public PriceAnalysisService(OkHttpClient httpClient, BuySellIndicatorConfig config)
+    public PriceAnalysisService(OkHttpClient httpClient, BuySellIndicatorConfig config, ItemManager itemManager)
     {
         this.httpClient = httpClient;
         this.config = config;
+        this.itemManager = itemManager;
     }
 
     public SignalResult getSignal(int itemId)
     {
+        if (isItemBlacklisted(itemId))
+        {
+            log.debug("Item {} is blacklisted, returning HOLD signal", itemId);
+            return new SignalResult(Signal.FILTERED, 0.0, System.currentTimeMillis());
+        }
+
         SignalResult cached = cache.get(itemId);
         long ttlMs = (long) config.cacheMinutes() * 60_000L;
         long now = System.currentTimeMillis();
@@ -725,6 +734,31 @@ public class PriceAnalysisService
         {
             return confidence;
         }
+    }
+
+    private boolean isItemBlacklisted(int itemId)
+    {
+        String blacklistedItems = config.blacklistedItems();
+        if (blacklistedItems == null || blacklistedItems.trim().isEmpty())
+        {
+            return false;
+        }
+
+        String itemName = itemManager.getItemComposition(itemId).getName();
+        if (itemName == null)
+        {
+            return false;
+        }
+
+        String[] blacklistedNames = blacklistedItems.toLowerCase().split(",");
+        for (String name : blacklistedNames)
+        {
+            if (itemName.toLowerCase().contains(name.trim()))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Getter

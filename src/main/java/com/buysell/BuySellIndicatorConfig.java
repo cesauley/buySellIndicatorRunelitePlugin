@@ -279,4 +279,15 @@ public interface BuySellIndicatorConfig extends Config
     {
         return true;
     }
+
+    @ConfigItem(
+        keyName = "blacklistedItems",
+        name = "Blacklisted Items",
+        description = "Comma-separated list of item names to hide signals for (e.g. Coins, Rune essence).",
+        position = 9
+    )
+    default String blacklistedItems()
+    {
+        return "";
+    }
 }
