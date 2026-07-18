@@ -123,6 +123,12 @@ public class BuySellIndicatorPlugin extends Plugin
             log.debug("Price threshold changed; clearing price cache");
             analysisService.clearCache();
         }
+
+        if ("blacklistedItems".equals(event.getKey()))
+        {
+            log.debug("Blacklist changed; clearing price cache");
+            analysisService.clearCache();
+        }
     }
 
     /**

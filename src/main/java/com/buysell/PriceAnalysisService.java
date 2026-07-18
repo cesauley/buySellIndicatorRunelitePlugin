@@ -95,10 +95,11 @@ public class PriceAnalysisService
 
     public SignalResult getSignal(int itemId)
     {
-        if (isItemBlacklisted(itemId))
+        if (isBlacklisted(itemId))
         {
-            log.debug("Item {} is blacklisted, returning HOLD signal", itemId);
-            return new SignalResult(Signal.FILTERED, 0.0, System.currentTimeMillis());
+            SignalResult filtered = new SignalResult(Signal.FILTERED, 0.0, System.currentTimeMillis());
+            cache.put(itemId, filtered);
+            return filtered;
         }
 
         SignalResult cached = cache.get(itemId);
@@ -161,6 +162,13 @@ public class PriceAnalysisService
     {
         try
         {
+            if (isBlacklisted(itemId))
+            {
+                log.debug("fetchAndAnalyse skipping blacklisted item {}", itemId);
+                cache.put(itemId, new SignalResult(Signal.FILTERED, 0.0, System.currentTimeMillis()));
+                return;
+            }
+
             List<Candle> candles = fetchTimeseries(itemId);
             SignalResult result;
             BuySellIndicatorConfig.AnalysisBundle bundle = config.analysisBundle();
@@ -736,24 +744,21 @@ public class PriceAnalysisService
         }
     }
 
-    private boolean isItemBlacklisted(int itemId)
+    private boolean isBlacklisted(int itemId)
     {
-        String blacklistedItems = config.blacklistedItems();
-        if (blacklistedItems == null || blacklistedItems.trim().isEmpty())
+        String raw = config.blacklistedItems();
+        if (raw == null || raw.trim().isEmpty())
         {
             return false;
         }
-
         String itemName = itemManager.getItemComposition(itemId).getName();
-        if (itemName == null)
+        if (itemName == null || itemName.isEmpty())
         {
             return false;
         }
-
-        String[] blacklistedNames = blacklistedItems.toLowerCase().split(",");
-        for (String name : blacklistedNames)
+        for (String token : raw.split(","))
         {
-            if (itemName.toLowerCase().contains(name.trim()))
+            if (itemName.equalsIgnoreCase(token.trim()))
             {
                 return true;
             }
