@@ -2,6 +2,7 @@ package com.buysell;
 
 import com.buysell.model.Signal;
 import com.buysell.model.SignalResult;
+import net.runelite.client.game.ItemManager;
 import okhttp3.Call;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -37,11 +38,13 @@ public class PriceAnalysisServiceTest
     private static final int CLASSIC_MIN_CANDLES = 24;
 
     private BuySellIndicatorConfig config;
+    private ItemManager itemManager;
 
     @Before
     public void setUp()
     {
         config = mock(BuySellIndicatorConfig.class);
+        itemManager = mock(ItemManager.class);
         when(config.cacheMinutes()).thenReturn(5);
         when(config.minConfidence()).thenReturn(0);
         when(config.analysisBundle()).thenReturn(BuySellIndicatorConfig.AnalysisBundle.FLIPPING_DAY_FLIP);
@@ -112,7 +115,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseFlip_flatMarket_lowConfidence() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 10; i++)
         {
@@ -126,7 +129,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseFlip_lastAtPeriodMin_isBuy() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 19; i++)
         {
@@ -140,7 +143,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseFlip_lastAtPeriodMax_isSell() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 19; i++)
         {
@@ -154,7 +157,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseFlip_exactlyMinCandles_doesNotThrow() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < MIN_CANDLES_FLIP; i++)
         {
@@ -177,7 +180,7 @@ public class PriceAnalysisServiceTest
         when(response.body()).thenReturn(body);
         when(body.string()).thenReturn(timeseriesJson(1, 100, 100));
 
-        PriceAnalysisService svc = new PriceAnalysisService(http, config);
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
         java.lang.reflect.Method m = PriceAnalysisService.class.getDeclaredMethod("fetchAndAnalyse", int.class);
         m.setAccessible(true);
         m.invoke(svc, 4151);
@@ -191,7 +194,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseFlip_zeroVolume_usesVwapFallback() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 10; i++)
         {
@@ -204,7 +207,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseFlip_highSpread_reducesConfidenceVsTightSpread() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> tight = new ArrayList<>();
         List<PriceAnalysisService.Candle> wide = new ArrayList<>();
         for (int i = 0; i < 15; i++)
@@ -223,7 +226,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseClassicTa_risingPrices_tendsBuy() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 30; i++)
         {
@@ -237,7 +240,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseClassicTa_fallingPrices_tendsSell() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 30; i++)
         {
@@ -251,7 +254,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseClassicTa_allEqualPrices_doesNotThrow() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 30; i++)
         {
@@ -264,7 +267,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseClassicTa_exactlyMinCandles_doesNotThrow() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < CLASSIC_MIN_CANDLES; i++)
         {
@@ -278,7 +281,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseZScore_priceBelowMean_isBuy() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 19; i++)
         {
@@ -292,7 +295,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseZScore_priceAboveMean_isSell() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 19; i++)
         {
@@ -306,7 +309,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseZScore_allEqual_stdZero_returnsHold() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 20; i++)
         {
@@ -320,7 +323,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseZScore_windowTooSmall_returnsHold() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 10; i++)
         {
@@ -333,7 +336,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseZScore_notEnoughCandles_returnsHold() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 5; i++)
         {
@@ -346,7 +349,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void analyseZScore_extremeZ_confidenceCapped() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         List<PriceAnalysisService.Candle> list = new ArrayList<>();
         for (int i = 0; i < 19; i++)
         {
@@ -362,7 +365,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void parseCandles_wellFormed() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         String json = "{\"data\":[{\"avgHighPrice\":120,\"avgLowPrice\":80,\"highPriceVolume\":1,\"lowPriceVolume\":1}]}";
         List<PriceAnalysisService.Candle> list = svc.parseCandles(json);
         assertNotNull(list);
@@ -374,21 +377,21 @@ public class PriceAnalysisServiceTest
     @Test
     public void parseCandles_missingDataKey_returnsNull() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         assertNull(svc.parseCandles("{}"));
     }
 
     @Test
     public void parseCandles_emptyArray_returnsNull() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         assertNull(svc.parseCandles("{\"data\":[]}"));
     }
 
     @Test
     public void parseCandles_allNullHighLow_returnsNull() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         String json = "{\"data\":["
             + "{\"avgHighPrice\":null,\"avgLowPrice\":100},"
             + "{\"avgHighPrice\":100,\"avgLowPrice\":null}"
@@ -399,7 +402,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void parseCandles_mixedValidAndInvalid_keepsValidOnly() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         String json = "{\"data\":["
             + "{\"avgHighPrice\":null,\"avgLowPrice\":100},"
             + "{\"avgHighPrice\":10,\"avgLowPrice\":10},"
@@ -414,7 +417,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void parseCandles_nonPositiveHigh_skipped() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         String json = "{\"data\":[{\"avgHighPrice\":0,\"avgLowPrice\":10}]}";
         assertNull(svc.parseCandles(json));
     }
@@ -422,7 +425,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void parseCandles_dataNotArray_returnsNull() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         assertNull(svc.parseCandles("{\"data\":\"oops\"}"));
     }
 
@@ -441,7 +444,7 @@ public class PriceAnalysisServiceTest
         when(response.body()).thenReturn(body);
         when(body.string()).thenReturn(timeseriesJson(20, 100, 100));
 
-        PriceAnalysisService svc = new PriceAnalysisService(http, config);
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
         assertNull(svc.getSignal(12345));
         Thread.sleep(400);
         verify(http, times(1)).newCall(any(Request.class));
@@ -451,7 +454,7 @@ public class PriceAnalysisServiceTest
     public void getSignal_freshCacheHit_noHttpCall() throws Exception
     {
         OkHttpClient http = mock(OkHttpClient.class);
-        PriceAnalysisService svc = new PriceAnalysisService(http, config);
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
         long now = System.currentTimeMillis();
         cacheMap(svc).put(99, new SignalResult(Signal.BUY, 80.0, now));
         SignalResult r = svc.getSignal(99);
@@ -473,7 +476,7 @@ public class PriceAnalysisServiceTest
         when(response.body()).thenReturn(body);
         when(body.string()).thenReturn(timeseriesJson(20, 100, 100));
 
-        PriceAnalysisService svc = new PriceAnalysisService(http, config);
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
         long old = System.currentTimeMillis() - 60L * 60_000L;
         cacheMap(svc).put(77, new SignalResult(Signal.SELL, 70.0, old));
         SignalResult r = svc.getSignal(77);
@@ -501,7 +504,7 @@ public class PriceAnalysisServiceTest
             return response;
         });
 
-        PriceAnalysisService svc = new PriceAnalysisService(http, config);
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
         assertNull(svc.getSignal(555));
         assertNull(svc.getSignal(555));
         blocker.countDown();
@@ -512,7 +515,7 @@ public class PriceAnalysisServiceTest
     @Test
     public void clearCache_emptiesGetCachedSignal() throws Exception
     {
-        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
         cacheMap(svc).put(1, SignalResult.hold());
         assertNotNull(svc.getCachedSignal(1));
         svc.clearCache();
