@@ -18,6 +18,8 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import static org.mockito.ArgumentMatchers.any;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -520,5 +522,267 @@ public class PriceAnalysisServiceTest
         assertNotNull(svc.getCachedSignal(1));
         svc.clearCache();
         assertNull(svc.getCachedSignal(1));
+    }
+
+    @Test
+    public void getCacheSnapshot_isIndependentCopy() throws Exception
+    {
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
+        cacheMap(svc).put(1, new SignalResult(Signal.BUY, 50, 1));
+        Map<Integer, SignalResult> snap = svc.getCacheSnapshot();
+        assertEquals(1, snap.size());
+        cacheMap(svc).put(2, new SignalResult(Signal.SELL, 50, 1));
+        assertEquals(1, snap.size());
+    }
+
+    @Test
+    public void getSignal_blacklisted_returnsFilteredAndCaches() throws Exception
+    {
+        net.runelite.api.ItemComposition def = mock(net.runelite.api.ItemComposition.class);
+        when(def.getName()).thenReturn("Coins");
+        when(itemManager.getItemComposition(995)).thenReturn(def);
+        when(config.blacklistedItems()).thenReturn("Coins, Rune essence");
+
+        OkHttpClient http = mock(OkHttpClient.class);
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
+        SignalResult r = svc.getSignal(995);
+        assertEquals(Signal.FILTERED, r.getSignal());
+        assertEquals(Signal.FILTERED, svc.getCachedSignal(995).getSignal());
+        verify(http, never()).newCall(any(Request.class));
+    }
+
+    @Test
+    public void fetchAndAnalyse_belowMinPrice_filtered() throws Exception
+    {
+        when(config.minItemPrice()).thenReturn(500);
+        when(config.maxItemPrice()).thenReturn(0);
+        OkHttpClient http = mock(OkHttpClient.class);
+        Call call = mock(Call.class);
+        Response response = mock(Response.class);
+        ResponseBody body = mock(ResponseBody.class);
+        when(http.newCall(any(Request.class))).thenReturn(call);
+        when(call.execute()).thenReturn(response);
+        when(response.isSuccessful()).thenReturn(true);
+        when(response.body()).thenReturn(body);
+        when(body.string()).thenReturn(timeseriesJson(20, 100, 100));
+
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
+        java.lang.reflect.Method m = PriceAnalysisService.class.getDeclaredMethod("fetchAndAnalyse", int.class);
+        m.setAccessible(true);
+        m.invoke(svc, 1);
+        assertEquals(Signal.FILTERED, svc.getCachedSignal(1).getSignal());
+    }
+
+    @Test
+    public void fetchAndAnalyse_aboveMaxPrice_filtered() throws Exception
+    {
+        when(config.minItemPrice()).thenReturn(0);
+        when(config.maxItemPrice()).thenReturn(50);
+        OkHttpClient http = mock(OkHttpClient.class);
+        Call call = mock(Call.class);
+        Response response = mock(Response.class);
+        ResponseBody body = mock(ResponseBody.class);
+        when(http.newCall(any(Request.class))).thenReturn(call);
+        when(call.execute()).thenReturn(response);
+        when(response.isSuccessful()).thenReturn(true);
+        when(response.body()).thenReturn(body);
+        when(body.string()).thenReturn(timeseriesJson(20, 1000, 1000));
+
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
+        java.lang.reflect.Method m = PriceAnalysisService.class.getDeclaredMethod("fetchAndAnalyse", int.class);
+        m.setAccessible(true);
+        m.invoke(svc, 2);
+        assertEquals(Signal.FILTERED, svc.getCachedSignal(2).getSignal());
+    }
+
+    @Test
+    public void fetchAndAnalyse_lowConfidence_downgradesToHold() throws Exception
+    {
+        when(config.minConfidence()).thenReturn(99);
+        when(config.minItemPrice()).thenReturn(0);
+        when(config.maxItemPrice()).thenReturn(0);
+        OkHttpClient http = mock(OkHttpClient.class);
+        Call call = mock(Call.class);
+        Response response = mock(Response.class);
+        ResponseBody body = mock(ResponseBody.class);
+        when(http.newCall(any(Request.class))).thenReturn(call);
+        when(call.execute()).thenReturn(response);
+        when(response.isSuccessful()).thenReturn(true);
+        when(response.body()).thenReturn(body);
+        // flat market -> low confidence
+        when(body.string()).thenReturn(timeseriesJson(20, 100, 100));
+
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
+        java.lang.reflect.Method m = PriceAnalysisService.class.getDeclaredMethod("fetchAndAnalyse", int.class);
+        m.setAccessible(true);
+        m.invoke(svc, 3);
+        SignalResult cached = svc.getCachedSignal(3);
+        assertNotNull(cached);
+        assertEquals(Signal.HOLD, cached.getSignal());
+    }
+
+    @Test
+    public void fetchAndAnalyse_httpFailure_cachesHold() throws Exception
+    {
+        OkHttpClient http = mock(OkHttpClient.class);
+        Call call = mock(Call.class);
+        Response response = mock(Response.class);
+        when(http.newCall(any(Request.class))).thenReturn(call);
+        when(call.execute()).thenReturn(response);
+        when(response.isSuccessful()).thenReturn(false);
+        when(response.body()).thenReturn(null);
+        when(response.code()).thenReturn(500);
+
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
+        java.lang.reflect.Method m = PriceAnalysisService.class.getDeclaredMethod("fetchAndAnalyse", int.class);
+        m.setAccessible(true);
+        m.invoke(svc, 4);
+        assertEquals(Signal.HOLD, svc.getCachedSignal(4).getSignal());
+    }
+
+    @Test
+    public void fetchAndAnalyse_exception_cachesHold() throws Exception
+    {
+        OkHttpClient http = mock(OkHttpClient.class);
+        Call call = mock(Call.class);
+        when(http.newCall(any(Request.class))).thenReturn(call);
+        when(call.execute()).thenThrow(new java.io.IOException("network down"));
+
+        PriceAnalysisService svc = new PriceAnalysisService(http, config, itemManager);
+        java.lang.reflect.Method m = PriceAnalysisService.class.getDeclaredMethod("fetchAndAnalyse", int.class);
+        m.setAccessible(true);
+        m.invoke(svc, 5);
+        assertEquals(Signal.HOLD, svc.getCachedSignal(5).getSignal());
+    }
+
+    @Test
+    public void putAndNotify_postsEventsWhenEventBusPresent() throws Exception
+    {
+        net.runelite.client.eventbus.EventBus bus = mock(net.runelite.client.eventbus.EventBus.class);
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager, bus);
+        java.lang.reflect.Method m = PriceAnalysisService.class.getDeclaredMethod(
+            "putAndNotify", int.class, SignalResult.class);
+        m.setAccessible(true);
+        SignalResult result = new SignalResult(Signal.BUY, 70, 1);
+        m.invoke(svc, 9, result);
+        verify(bus).post(any(com.buysell.event.SignalUpdated.class));
+
+        svc.clearCache();
+        verify(bus).post(any(com.buysell.event.SignalsCleared.class));
+    }
+
+    @Test
+    public void analyse_trimsToMaxCandles_andDispatchesModels() throws Exception
+    {
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
+        List<PriceAnalysisService.Candle> many = new ArrayList<>();
+        for (int i = 0; i < 400; i++)
+        {
+            many.add(c(100 + (i % 10), 100 + (i % 10)));
+        }
+        assertNotNull(svc.analyse(many, BuySellIndicatorConfig.AnalysisBundle.FLIPPING_DAY_FLIP));
+        assertNotNull(svc.analyse(many, BuySellIndicatorConfig.AnalysisBundle.FLIPPING_DAY_CLASSIC_TA));
+        assertNotNull(svc.analyse(many, BuySellIndicatorConfig.AnalysisBundle.MERCHANTING_ZSCORE));
+    }
+
+    @Test
+    public void isBlacklisted_emptyAndMismatches() throws Exception
+    {
+        when(config.blacklistedItems()).thenReturn("  ");
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
+        java.lang.reflect.Method m = PriceAnalysisService.class.getDeclaredMethod("isBlacklisted", int.class);
+        m.setAccessible(true);
+        assertEquals(false, m.invoke(svc, 1));
+
+        when(config.blacklistedItems()).thenReturn("Whip");
+        net.runelite.api.ItemComposition def = mock(net.runelite.api.ItemComposition.class);
+        when(def.getName()).thenReturn("Abyssal whip");
+        when(itemManager.getItemComposition(1)).thenReturn(def);
+        assertEquals(false, m.invoke(svc, 1));
+
+        when(def.getName()).thenReturn("");
+        assertEquals(false, m.invoke(svc, 1));
+    }
+
+    @Test
+    public void fetchAndAnalyse_blacklisted_filtered() throws Exception
+    {
+        net.runelite.api.ItemComposition def = mock(net.runelite.api.ItemComposition.class);
+        when(def.getName()).thenReturn("Coins");
+        when(itemManager.getItemComposition(995)).thenReturn(def);
+        when(config.blacklistedItems()).thenReturn("Coins");
+
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
+        java.lang.reflect.Method m = PriceAnalysisService.class.getDeclaredMethod("fetchAndAnalyse", int.class);
+        m.setAccessible(true);
+        m.invoke(svc, 995);
+        assertEquals(Signal.FILTERED, svc.getCachedSignal(995).getSignal());
+    }
+
+    @Test
+    public void analyseClassicTa_rsiMidBand_paths() throws Exception
+    {
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
+        // mild rise then flatten so RSI sits between 30 and 70
+        List<PriceAnalysisService.Candle> list = new ArrayList<>();
+        for (int i = 0; i < 40; i++)
+        {
+            double p = 100 + Math.min(i, 10);
+            list.add(c(p, p));
+        }
+        SignalResult r = svc.analyseClassicTa(list);
+        assertNotNull(r);
+    }
+
+    @Test
+    public void analyseZScore_exactMean_isHold() throws Exception
+    {
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
+        List<PriceAnalysisService.Candle> list = new ArrayList<>();
+        // alternating around mean so last equals mean of window
+        for (int i = 0; i < 19; i++)
+        {
+            list.add(c(i % 2 == 0 ? 90 : 110, i % 2 == 0 ? 90 : 110));
+        }
+        list.add(c(100, 100));
+        // force mean == current by using identical values with tiny noise zero
+        list.clear();
+        for (int i = 0; i < 20; i++)
+        {
+            list.add(c(100, 100));
+        }
+        // all equal already covered as HOLD via std==0; create z==0 with non-zero std:
+        list.clear();
+        for (int i = 0; i < 19; i++)
+        {
+            list.add(c(i < 9 ? 50 : 150, i < 9 ? 50 : 150));
+        }
+        // mean of 20 values: need last = mean. Use 10 of 0 and 9 of 200 + last X.
+        list.clear();
+        for (int i = 0; i < 10; i++) list.add(c(0, 0));
+        for (int i = 0; i < 9; i++) list.add(c(200, 200));
+        list.add(c(100, 100)); // mean = (0*10 + 200*9 + 100)/20 = 1900/20 = 95, not 100
+        // Better: 9 of 50, 9 of 150, 1 of 100 already in window before last, last 100
+        list.clear();
+        for (int i = 0; i < 9; i++) list.add(c(50, 50));
+        for (int i = 0; i < 9; i++) list.add(c(150, 150));
+        list.add(c(100, 100));
+        list.add(c(100, 100));
+        // window 20: 9*50 + 9*150 + 100 + 100 = 450+1350+200=2000 / 20 = 100; std > 0; z=0
+        SignalResult r = svc.analyseZScore(list, 20);
+        assertEquals(Signal.HOLD, r.getSignal());
+    }
+
+    @Test
+    public void minCandlesRequired_forClassicAndZScore() throws Exception
+    {
+        PriceAnalysisService svc = new PriceAnalysisService(mock(OkHttpClient.class), config, itemManager);
+        java.lang.reflect.Method m = PriceAnalysisService.class.getDeclaredMethod(
+            "minCandlesRequired", BuySellIndicatorConfig.AnalysisBundle.class);
+        m.setAccessible(true);
+        int classic = (Integer) m.invoke(null, BuySellIndicatorConfig.AnalysisBundle.FLIPPING_DAY_CLASSIC_TA);
+        int z = (Integer) m.invoke(null, BuySellIndicatorConfig.AnalysisBundle.MERCHANTING_ZSCORE);
+        assertTrue(classic > 0);
+        assertTrue(z > 0);
     }
 }

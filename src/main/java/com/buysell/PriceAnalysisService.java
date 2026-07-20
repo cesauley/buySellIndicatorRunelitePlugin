@@ -1,5 +1,7 @@
 package com.buysell;
 
+import com.buysell.event.SignalUpdated;
+import com.buysell.event.SignalsCleared;
 import com.buysell.model.Signal;
 import com.buysell.model.SignalResult;
 import com.google.gson.JsonArray;
@@ -10,6 +12,7 @@ import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.game.ItemManager;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -19,6 +22,8 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -73,6 +78,7 @@ public class PriceAnalysisService
     private final OkHttpClient httpClient;
     private final BuySellIndicatorConfig config;
     private final ItemManager itemManager;
+    private final EventBus eventBus;
 
     private final Map<Integer, SignalResult> cache = new ConcurrentHashMap<>();
 
@@ -86,11 +92,24 @@ public class PriceAnalysisService
     });
 
     @Inject
-    public PriceAnalysisService(OkHttpClient httpClient, BuySellIndicatorConfig config, ItemManager itemManager)
+    public PriceAnalysisService(
+        OkHttpClient httpClient,
+        BuySellIndicatorConfig config,
+        ItemManager itemManager,
+        EventBus eventBus)
     {
         this.httpClient = httpClient;
         this.config = config;
         this.itemManager = itemManager;
+        this.eventBus = eventBus;
+    }
+
+    /**
+     * Test/helper constructor that does not publish events.
+     */
+    PriceAnalysisService(OkHttpClient httpClient, BuySellIndicatorConfig config, ItemManager itemManager)
+    {
+        this(httpClient, config, itemManager, null);
     }
 
     public SignalResult getSignal(int itemId)
@@ -98,7 +117,7 @@ public class PriceAnalysisService
         if (isBlacklisted(itemId))
         {
             SignalResult filtered = new SignalResult(Signal.FILTERED, 0.0, System.currentTimeMillis());
-            cache.put(itemId, filtered);
+            putAndNotify(itemId, filtered);
             return filtered;
         }
 
@@ -135,11 +154,34 @@ public class PriceAnalysisService
         return cache.get(itemId);
     }
 
+    /**
+     * Immutable snapshot of the current analysis cache for sidebar rendering.
+     */
+    public Map<Integer, SignalResult> getCacheSnapshot()
+    {
+        return Collections.unmodifiableMap(new HashMap<>(cache));
+    }
+
     public void clearCache()
     {
         int n = cache.size();
         cache.clear();
         log.debug("clearCache removed {} entries", n);
+        postEvent(new SignalsCleared());
+    }
+
+    private void putAndNotify(int itemId, SignalResult result)
+    {
+        cache.put(itemId, result);
+        postEvent(new SignalUpdated(itemId, result));
+    }
+
+    private void postEvent(Object event)
+    {
+        if (eventBus != null)
+        {
+            eventBus.post(event);
+        }
     }
 
     private static int minCandlesRequired(BuySellIndicatorConfig.AnalysisBundle bundle)
@@ -165,7 +207,7 @@ public class PriceAnalysisService
             if (isBlacklisted(itemId))
             {
                 log.debug("fetchAndAnalyse skipping blacklisted item {}", itemId);
-                cache.put(itemId, new SignalResult(Signal.FILTERED, 0.0, System.currentTimeMillis()));
+                putAndNotify(itemId, new SignalResult(Signal.FILTERED, 0.0, System.currentTimeMillis()));
                 return;
             }
 
@@ -210,14 +252,14 @@ public class PriceAnalysisService
                 }
             }
 
-            cache.put(itemId, result);
+            putAndNotify(itemId, result);
             log.debug("Cached signal itemId={} signal={} confidence={}",
                 itemId, result.getSignal(), result.getConfidence());
         }
         catch (Exception e)
         {
             log.warn("Failed to fetch/analyse item {}: {}", itemId, e.getMessage());
-            cache.put(itemId, SignalResult.hold());
+            putAndNotify(itemId, SignalResult.hold());
         }
         finally
         {

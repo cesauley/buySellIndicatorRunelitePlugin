@@ -1,0 +1,259 @@
+Unused Code & Cleanup Candidates Report
+=======================================
+Project: buySellIndicatorRunelitePlugin
+Generated after: Indicator Sidebar Panel feature implementation + verification
+Coverage at generation: ~95.77% aggregate JaCoCo LINE coverage (threshold 90%)
+Branch coverage (informational only): ~67.91%
+
+Purpose
+-------
+This document lists cleanup candidates identified after implementing the sidebar
+panel feature. NOTHING in this list was removed unless noted. A follow-up model
+or human should decide what to delete or fix. Distinguish genuinely dead code
+from RuneLite lifecycle / DI / event-bus entry points that look unused to static
+analysis.
+
+
+1. Feature context (what was just added)
+----------------------------------------
+The plugin previously had:
+  - BuySellIndicatorPlugin (entry)
+  - BuySellIndicatorOverlay (item-tile BUY/SELL/HOLD labels)
+  - PriceAnalysisService (Wiki API + analysis + in-memory cache)
+  - BankFilterManager (in-bank filter button)
+  - BuySellIndicatorConfig (RuneLite-generated wrench settings)
+  - model.Signal / model.SignalResult
+
+The sidebar feature added:
+  - BuySellIndicatorPanel (PluginPanel: Buy/Sell/Hold tabs + gear → settings)
+  - BuySellIndicatorSettingsPanel (staged settings editor inside the panel)
+  - SettingsDraft (mutable draft + validate / toConfigValues / isDirty)
+  - SignalListModel (partition cache → Buy/Sell/Hold lists)
+  - GraphOpeningService (shared prices.osrs.cloud browser open)
+  - event.SignalUpdated / event.SignalsCleared (cache update notifications)
+  - src/main/resources/com/buysell/panel_icon.png (sidebar NavigationButton icon)
+  - JaCoCo in build.gradle with jacocoTestCoverageVerification at 90% LINE
+
+PriceAnalysisService was extended with:
+  - getCacheSnapshot()
+  - EventBus posts on putAndNotify() / clearCache()
+  - Guice constructor now takes EventBus; package-private 3-arg ctor remains for older tests
+
+BuySellIndicatorPlugin now:
+  - Registers ClientToolbar NavigationButton → panel
+  - Registers panel on EventBus
+  - Clears cache on minConfidence (in addition to analysisBundle / prices / blacklist)
+  - Uses GraphOpeningService for "View Graph" menu action
+
+
+2. Cleanup candidates (do not auto-delete without review)
+---------------------------------------------------------
+
+### 2.1 AnalysisBundle.getPlaystyle()
+Location:
+  src/main/java/com/buysell/BuySellIndicatorConfig.java
+  enum AnalysisBundle → getPlaystyle()
+
+Evidence:
+  Production analysis code (PriceAnalysisService) uses getModel(), getApiTimestep(),
+  getMaxCandles(), getZScoreSmaPeriod(). getPlaystyle() is only exercised by unit
+  tests (BuySellIndicatorConfigTest) and is not read by runtime signal logic.
+
+Risk: Low
+Recommendation:
+  Keep if you want Playstyle as documented metadata on bundles for future UI
+  grouping (e.g. Flipping vs Merchanting sections). Otherwise remove Playstyle
+  enum + field + getter if you want a thinner config surface.
+
+Related (NOT unused):
+  Playstyle enum values are still assigned in AnalysisBundle constructors and
+  stored on each constant; only the getter appears unconsumed by production.
+
+
+### 2.2 Overlay does not honor config.showOnInventory() / showOnBank()
+Location:
+  src/main/java/com/buysell/BuySellIndicatorOverlay.java
+  Constructor always calls WidgetItemOverlay.showOnInventory() and showOnBank().
+  renderItemOverlay() never reads config.showOnInventory() / showOnBank().
+
+Config keys ARE used elsewhere:
+  - BuySellIndicatorPlugin.onMenuEntryAdded gates "View Graph" by these toggles
+  - BuySellIndicatorSettingsPanel / SettingsDraft expose and persist them
+  - BuySellIndicatorConfig defines the @ConfigItem defaults
+
+Evidence of mismatch:
+  Overlay comments (~lines 60–66) claim runtime config re-check and/or plugin
+  re-registration based on toggles. That wiring does not exist. Toggling
+  "Show on Inventory" / "Show on Bank" therefore affects the context-menu graph
+  action and settings UI, but overlay labels still draw on both interfaces.
+
+Risk: Medium (behavior / UX gap, not dead code)
+Recommendation:
+  Either:
+    (A) Wire toggles: re-register overlay interfaces on ConfigChanged, or skip
+        draw in renderItemOverlay when the parent interface is disabled; or
+    (B) Update README + overlay comments to state that those toggles only affect
+        View Graph (and rename config items if that is intentional).
+
+This is the highest-value follow-up among the findings.
+
+
+### 2.3 Misleading comments in BuySellIndicatorOverlay
+Location:
+  src/main/java/com/buysell/BuySellIndicatorOverlay.java (comment block in
+  renderItemOverlay)
+
+Evidence:
+  Comments describe behavior that is not implemented (see 2.2).
+
+Risk: Low (documentation debt)
+Recommendation:
+  Rewrite comments to match actual behavior after deciding 2.2 (A) vs (B).
+
+
+### 2.4 Package-visible test hooks on BuySellIndicatorPanel
+Location:
+  src/main/java/com/buysell/BuySellIndicatorPanel.java
+  Methods: isShowingSettings(), getSettingsPanel()
+  Also package-visible: showSettings(), showDashboard(), refreshLists()
+
+Evidence:
+  isShowingSettings() and getSettingsPanel() are called from
+  BuySellIndicatorPanelTest. They are not required by RuneLite itself.
+
+Risk: Low
+Recommendation:
+  Keep for testability (preferred for Swing panels), or annotate / document as
+  package-private test API. Do not make them public API without need.
+
+
+### 2.5 GraphOpeningService package-private test API
+Location:
+  src/main/java/com/buysell/GraphOpeningService.java
+  - PRICE_GRAPH_BASE_URL (package-private static)
+  - GraphOpeningService(ExecutorService, BooleanSupplier, Supplier<Desktop>)
+  - openUrlInBrowser(String)
+
+Evidence:
+  Used by GraphOpeningServiceTest for headless-safe injection of Desktop support
+  and executor. Production uses @Inject no-arg constructor.
+
+Risk: Low
+Recommendation:
+  Keep. This is intentional test seam, not dead code.
+
+
+### 2.6 PriceAnalysisService package-private 3-arg constructor
+Location:
+  src/main/java/com/buysell/PriceAnalysisService.java
+  PriceAnalysisService(OkHttpClient, BuySellIndicatorConfig, ItemManager)
+  delegates to 4-arg ctor with eventBus=null (no event publishing).
+
+Evidence:
+  Retained so existing unit tests that construct the service without EventBus
+  continue to compile. Guice uses the @Inject 4-arg constructor.
+
+Risk: Low
+Recommendation:
+  Keep for tests, or migrate all tests to pass a mock EventBus and delete the
+  3-arg overload.
+
+
+### 2.7 Root-level old plan file
+Location:
+  item_blacklist_feature_50ea7dcb.plan.md (repository root)
+
+Evidence:
+  Historical plan artifact; not referenced by Gradle, plugin properties, or
+  source. Unrelated to the sidebar feature plan (which lives under .cursor/plans).
+
+Risk: Low
+Recommendation:
+  Delete from repo root if plans should not be committed, or move under docs/
+  / .cursor/plans/ if you want to keep history.
+
+
+### 2.8 Empty package directories (RESOLVED during audit)
+Location (removed during audit because they contained zero files):
+  src/main/java/com/buysell/ui/
+  src/test/java/com/buysell/ui/
+
+Evidence:
+  Created as scaffolding during sidebar work; no classes were placed there.
+  UI classes live directly under com.buysell.
+
+Action taken:
+  Empty directories were removed. No source was deleted.
+
+
+3. Things that LOOK unused but MUST NOT be removed
+--------------------------------------------------
+Do not flag these as dead code without understanding RuneLite conventions:
+
+  - @PluginDescriptor / Plugin.startUp / shutDown
+  - @Subscribe methods (EventBus reflection)
+  - @Provides BuySellIndicatorConfig
+  - @Inject fields (Guice)
+  - @ConfigItem / @ConfigGroup methods (RuneLite config UI + persistence)
+  - NavigationButton + panel_icon.png (loaded via ImageUtil.loadImageResource)
+  - BankFilterManager script callbacks (bankSearchFilter, getSearchingTagTab,
+    ScriptPostFired BANKMAIN_*) — driven by client script events
+  - FilterMode enum on config interface — runtime bank button state, not a
+    persisted @ConfigItem, but used by BankFilterManager
+  - Signal.FILTERED — used to suppress overlay / lists / menus
+  - Lombok-generated getters on SignalResult / event DTOs
+
+
+4. Coverage gaps (not unused code; optional test follow-ups)
+-----------------------------------------------------------
+Remaining missed lines (approx at last verification) concentrated in:
+
+  - BankFilterManager (~24 missed): inject/hide edge paths, potion-store menu
+    action path, some reposition / widget-origin null branches
+  - PriceAnalysisService (~12 missed): rare RSI/velocity branches, default
+    switch arm for unknown AnalysisModel (defensive throw)
+  - BuySellIndicatorPlugin (~7 missed): additional menu early-return paths
+  - BuySellIndicatorSettingsPanel (~6 missed): JOptionPane discard-confirm YES/NO
+    branches (hard under headless without a dialog seam)
+  - GraphOpeningService / panel anonymous MouseAdapter: thin residual
+
+These are incomplete branch coverage, not evidence of unused production APIs.
+
+
+5. Suggested priority for a reviewing model
+-------------------------------------------
+  1. Decide and implement 2.2 (overlay vs config toggles) — functional correctness
+  2. Fix 2.3 comments after 2.2 decision
+  3. Optionally delete 2.7 root plan file
+  4. Optionally thin getPlaystyle() (2.1) if no UI plans for playstyle grouping
+  5. Leave test seams (2.4–2.6) unless consolidating test construction
+
+
+6. Key file index for reviewers
+-------------------------------
+Production:
+  src/main/java/com/buysell/BuySellIndicatorPlugin.java
+  src/main/java/com/buysell/BuySellIndicatorPanel.java
+  src/main/java/com/buysell/BuySellIndicatorSettingsPanel.java
+  src/main/java/com/buysell/BuySellIndicatorOverlay.java
+  src/main/java/com/buysell/BuySellIndicatorConfig.java
+  src/main/java/com/buysell/PriceAnalysisService.java
+  src/main/java/com/buysell/BankFilterManager.java
+  src/main/java/com/buysell/GraphOpeningService.java
+  src/main/java/com/buysell/SettingsDraft.java
+  src/main/java/com/buysell/SignalListModel.java
+  src/main/java/com/buysell/event/SignalUpdated.java
+  src/main/java/com/buysell/event/SignalsCleared.java
+  src/main/resources/com/buysell/panel_icon.png
+
+Verification:
+  build.gradle (jacoco + jacocoTestCoverageVerification)
+  ./gradlew test jacocoTestCoverageVerification
+  build/reports/jacoco/test/html/index.html
+
+
+7. Explicit non-actions from the sidebar plan
+---------------------------------------------
+Per plan: deliver this report; do not remove reported unused code unless a human
+separately requests cleanup. The only filesystem change made during this audit
+was removing empty unused package directories (section 2.8).

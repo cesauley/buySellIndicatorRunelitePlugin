@@ -19,21 +19,20 @@ import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.util.ImageUtil;
 
 import javax.inject.Inject;
-import java.awt.Desktop;
-import java.net.URI;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.awt.image.BufferedImage;
 
 /**
  * Main plugin entry point.
  *
  * Registers the WidgetItemOverlay so RuneLite calls renderItemOverlay() for
- * every visible item in the inventory and bank interfaces.
- * The PriceAnalysisService is a Singleton managed by Guice and shared with
- * the overlay via injection.
+ * every visible item in the inventory and bank interfaces, and a sidebar panel
+ * listing Buy / Sell / Hold signals for observed items.
  */
 @Slf4j
 @PluginDescriptor(
@@ -47,7 +46,6 @@ import java.util.concurrent.Executors;
 public class BuySellIndicatorPlugin extends Plugin
 {
     private static final String MENU_OPTION_VIEW_GRAPH = "View Graph";
-    private static final String PRICE_GRAPH_BASE_URL = "https://prices.osrs.cloud/item/";
 
     @Inject
     private EventBus eventBus;
@@ -73,31 +71,52 @@ public class BuySellIndicatorPlugin extends Plugin
     @Inject
     private BuySellIndicatorConfig config;
 
-    private final ExecutorService browserExecutor = Executors.newSingleThreadExecutor(r ->
-    {
-        Thread t = new Thread(r, "buysell-view-graph");
-        t.setDaemon(true);
-        return t;
-    });
+    @Inject
+    private ClientToolbar clientToolbar;
+
+    @Inject
+    private BuySellIndicatorPanel panel;
+
+    @Inject
+    private GraphOpeningService graphOpeningService;
+
+    private NavigationButton navButton;
 
     @Override
     protected void startUp()
     {
         eventBus.register(this);
         eventBus.register(bankFilterManager);
+        eventBus.register(panel);
         overlayManager.add(overlay);
+
+        final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
+        navButton = NavigationButton.builder()
+            .tooltip("Buy/Sell Indicator")
+            .icon(icon)
+            .priority(5)
+            .panel(panel)
+            .build();
+        clientToolbar.addNavigation(navButton);
+
         log.info("Buy/Sell Indicator plugin started");
     }
 
     @Override
     protected void shutDown()
     {
+        if (navButton != null)
+        {
+            clientToolbar.removeNavigation(navButton);
+            navButton = null;
+        }
+        eventBus.unregister(panel);
         eventBus.unregister(bankFilterManager);
         bankFilterManager.reset();
         eventBus.unregister(this);
         overlayManager.remove(overlay);
         analysisService.clearCache();
-        browserExecutor.shutdown();
+        graphOpeningService.shutdown();
         log.info("Buy/Sell Indicator plugin stopped");
     }
 
@@ -112,21 +131,13 @@ public class BuySellIndicatorPlugin extends Plugin
         log.debug("Config changed group={} key={} oldValue={} newValue={}",
             event.getGroup(), event.getKey(), event.getOldValue(), event.getNewValue());
 
-        if ("analysisBundle".equals(event.getKey()))
+        if ("analysisBundle".equals(event.getKey())
+            || "minItemPrice".equals(event.getKey())
+            || "maxItemPrice".equals(event.getKey())
+            || "blacklistedItems".equals(event.getKey())
+            || "minConfidence".equals(event.getKey()))
         {
-            log.debug("Analysis bundle changed; clearing price cache");
-            analysisService.clearCache();
-        }
-
-        if ("minItemPrice".equals(event.getKey()) || "maxItemPrice".equals(event.getKey()))
-        {
-            log.debug("Price threshold changed; clearing price cache");
-            analysisService.clearCache();
-        }
-
-        if ("blacklistedItems".equals(event.getKey()))
-        {
-            log.debug("Blacklist changed; clearing price cache");
+            log.debug("Analysis-affecting config changed; clearing price cache key={}", event.getKey());
             analysisService.clearCache();
         }
     }
@@ -227,9 +238,7 @@ public class BuySellIndicatorPlugin extends Plugin
         }
 
         event.consume();
-
-        String url = PRICE_GRAPH_BASE_URL + canonicalId;
-        browserExecutor.execute(() -> openUrlInBrowser(url));
+        graphOpeningService.openItemGraph(canonicalId);
     }
 
     private boolean menuAlreadyHasViewGraphForItem(int canonicalId)
@@ -265,30 +274,6 @@ public class BuySellIndicatorPlugin extends Plugin
             }
         }
         return false;
-    }
-
-    private void openUrlInBrowser(String url)
-    {
-        try
-        {
-            if (!Desktop.isDesktopSupported())
-            {
-                log.warn("View Graph: Desktop API not supported; cannot open {}", url);
-                return;
-            }
-            Desktop desktop = Desktop.getDesktop();
-            if (!desktop.isSupported(Desktop.Action.BROWSE))
-            {
-                log.warn("View Graph: BROWSE action not supported; cannot open {}", url);
-                return;
-            }
-            desktop.browse(new URI(url));
-            log.debug("View Graph opened {}", url);
-        }
-        catch (Exception e)
-        {
-            log.warn("View Graph: failed to open {}: {}", url, e.getMessage());
-        }
     }
 
     @Provides
