@@ -51,6 +51,7 @@ public class BuySellIndicatorSettingsPanel extends JPanel
     private JCheckBox enableBankSignalFilter;
     private JTextArea blacklistedItems;
     private JLabel statusLabel;
+    private JButton backButton;
 
     public BuySellIndicatorSettingsPanel(
         BuySellIndicatorConfig config,
@@ -131,17 +132,21 @@ public class BuySellIndicatorSettingsPanel extends JPanel
         header.setBackground(ColorScheme.DARK_GRAY_COLOR);
         header.setBorder(new EmptyBorder(0, 0, 8, 0));
 
-        JButton back = new JButton("\u2190");
-        SwingUtil.removeButtonDecorations(back);
-        back.setToolTipText("Back");
-        back.setPreferredSize(new Dimension(28, 28));
-        back.addActionListener(e -> tryGoBack());
+        backButton = new JButton("\u2190");
+        SwingUtil.removeButtonDecorations(backButton);
+        backButton.setToolTipText("Back to signals");
+        backButton.setPreferredSize(new Dimension(28, 28));
+        backButton.setForeground(ColorScheme.TEXT_COLOR);
+        backButton.setFont(backButton.getFont().deriveFont(20f));
+        backButton.setFocusPainted(false);
+        backButton.getAccessibleContext().setAccessibleName("Back to signals");
+        backButton.addActionListener(e -> tryGoBack());
 
         JLabel title = new JLabel("Settings");
         title.setForeground(Color.WHITE);
         title.setFont(title.getFont().deriveFont(Font.BOLD, 14f));
 
-        header.add(back, BorderLayout.WEST);
+        header.add(backButton, BorderLayout.WEST);
         header.add(title, BorderLayout.CENTER);
         return header;
     }
@@ -252,6 +257,11 @@ public class BuySellIndicatorSettingsPanel extends JPanel
     private void setStatus(String text)
     {
         statusLabel.setText(text == null || text.isEmpty() ? " " : text);
+    }
+
+    JButton getBackButton()
+    {
+        return backButton;
     }
 
     private static void styleCheck(JCheckBox box)

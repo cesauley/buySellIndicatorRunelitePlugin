@@ -5,9 +5,15 @@ import com.buysell.model.SignalResult;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
+import net.runelite.api.InventoryID;
+import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
+import net.runelite.api.ItemContainer;
 import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.gameval.InterfaceID;
@@ -25,7 +31,10 @@ import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.util.ImageUtil;
 
 import javax.inject.Inject;
+import javax.swing.SwingUtilities;
 import java.awt.image.BufferedImage;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Main plugin entry point.
@@ -89,6 +98,7 @@ public class BuySellIndicatorPlugin extends Plugin
         eventBus.register(bankFilterManager);
         eventBus.register(panel);
         overlayManager.add(overlay);
+        SwingUtilities.invokeLater(panel::refreshLists);
 
         final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
         navButton = NavigationButton.builder()
@@ -139,6 +149,25 @@ public class BuySellIndicatorPlugin extends Plugin
         {
             log.debug("Analysis-affecting config changed; clearing price cache key={}", event.getKey());
             analysisService.clearCache();
+            requestInventoryAnalysis();
+        }
+    }
+
+    @Subscribe
+    public void onGameStateChanged(GameStateChanged event)
+    {
+        if (event.getGameState() == GameState.LOGGED_IN)
+        {
+            requestInventoryAnalysis();
+        }
+    }
+
+    @Subscribe
+    public void onItemContainerChanged(ItemContainerChanged event)
+    {
+        if (event.getContainerId() == InventoryID.INVENTORY.getId())
+        {
+            requestInventoryAnalysis();
         }
     }
 
@@ -262,6 +291,41 @@ public class BuySellIndicatorPlugin extends Plugin
             }
         }
         return false;
+    }
+
+    private void requestInventoryAnalysis()
+    {
+        if (!config.showOnInventory())
+        {
+            return;
+        }
+
+        ItemContainer inventory = client.getItemContainer(InventoryID.INVENTORY);
+        if (inventory == null)
+        {
+            return;
+        }
+
+        Set<Integer> itemIds = new HashSet<>();
+        for (Item item : inventory.getItems())
+        {
+            if (item == null || item.getId() <= 0)
+            {
+                continue;
+            }
+
+            int canonicalId = itemManager.canonicalize(item.getId());
+            if (canonicalId <= 0 || !itemIds.add(canonicalId))
+            {
+                continue;
+            }
+
+            ItemComposition itemComposition = itemManager.getItemComposition(canonicalId);
+            if (itemComposition != null && itemComposition.isTradeable())
+            {
+                analysisService.getSignal(canonicalId);
+            }
+        }
     }
 
     private static boolean widgetHasAncestor(Widget widget, int ancestorPackedId)

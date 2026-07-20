@@ -12,11 +12,14 @@ import org.junit.Before;
 import org.junit.Test;
 
 import javax.swing.SwingUtilities;
+import java.awt.Color;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -79,6 +82,21 @@ public class BuySellIndicatorPanelTest
     }
 
     @Test
+    public void navigationButtons_switchBetweenDashboardAndSettings() throws Exception
+    {
+        SwingUtilities.invokeAndWait(() ->
+        {
+            assertEquals("\u2699", panel.getSettingsButton().getText());
+            panel.getSettingsButton().doClick();
+            assertTrue(panel.isShowingSettings());
+
+            assertEquals("\u2190", panel.getSettingsPanel().getBackButton().getText());
+            panel.getSettingsPanel().getBackButton().doClick();
+            assertFalse(panel.isShowingSettings());
+        });
+    }
+
+    @Test
     public void refreshLists_withSignals_updatesTabs() throws Exception
     {
         Map<Integer, SignalResult> snap = new HashMap<>();
@@ -92,6 +110,10 @@ public class BuySellIndicatorPanelTest
         when(itemManager.getImage(anyInt())).thenReturn(image);
 
         SwingUtilities.invokeAndWait(panel::refreshLists);
+        assertEquals("Buy (1)", panel.getTabLabelText(0));
+        assertEquals("Sell (1)", panel.getTabLabelText(1));
+        assertEquals("Hold (1)", panel.getTabLabelText(2));
+        assertNotEquals(new Color(0, 220, 80), panel.getTabLabelColor(0));
         verify(analysisService, org.mockito.Mockito.atLeastOnce()).getCacheSnapshot();
     }
 

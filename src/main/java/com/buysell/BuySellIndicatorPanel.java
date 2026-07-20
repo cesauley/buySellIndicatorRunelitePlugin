@@ -39,6 +39,10 @@ import java.util.Map;
 @Slf4j
 public class BuySellIndicatorPanel extends PluginPanel
 {
+    private static final int BUY_TAB_INDEX = 0;
+    private static final int SELL_TAB_INDEX = 1;
+    private static final int HOLD_TAB_INDEX = 2;
+
     private final PriceAnalysisService analysisService;
     private final ItemManager itemManager;
     private final BuySellIndicatorConfig config;
@@ -56,6 +60,7 @@ public class BuySellIndicatorPanel extends PluginPanel
     private final JLabel emptyBuy = emptyLabel("No BUY signals yet");
     private final JLabel emptySell = emptyLabel("No SELL signals yet");
     private final JLabel emptyHold = emptyLabel("No HOLD signals yet");
+    private JButton settingsButton;
 
     private boolean showingSettings;
 
@@ -100,20 +105,25 @@ public class BuySellIndicatorPanel extends PluginPanel
         title.setForeground(Color.WHITE);
         title.setFont(title.getFont().deriveFont(Font.BOLD, 14f));
 
-        JButton gear = new JButton("\u2699");
-        SwingUtil.removeButtonDecorations(gear);
-        gear.setToolTipText("Settings");
-        gear.setPreferredSize(new Dimension(28, 28));
-        gear.setForeground(Color.LIGHT_GRAY);
-        gear.addActionListener(e -> showSettings());
+        settingsButton = new JButton("\u2699");
+        SwingUtil.removeButtonDecorations(settingsButton);
+        settingsButton.setToolTipText("Open settings");
+        settingsButton.setPreferredSize(new Dimension(28, 28));
+        settingsButton.setForeground(ColorScheme.TEXT_COLOR);
+        settingsButton.setFont(settingsButton.getFont().deriveFont(20f));
+        settingsButton.setFocusPainted(false);
+        settingsButton.getAccessibleContext().setAccessibleName("Settings");
+        settingsButton.addActionListener(e -> showSettings());
 
         header.add(title, BorderLayout.CENTER);
-        header.add(gear, BorderLayout.EAST);
+        header.add(settingsButton, BorderLayout.EAST);
 
         tabs.setBackground(ColorScheme.DARK_GRAY_COLOR);
         tabs.addTab("Buy", wrapList(buyList));
         tabs.addTab("Sell", wrapList(sellList));
         tabs.addTab("Hold", wrapList(holdList));
+        tabs.addChangeListener(e -> updateTabLabelColors());
+        updateTabLabelColors();
 
         dashboard.add(header, BorderLayout.NORTH);
         dashboard.add(tabs, BorderLayout.CENTER);
@@ -149,6 +159,21 @@ public class BuySellIndicatorPanel extends PluginPanel
         return settingsPanel;
     }
 
+    JButton getSettingsButton()
+    {
+        return settingsButton;
+    }
+
+    String getTabLabelText(int index)
+    {
+        return tabs.getTitleAt(index);
+    }
+
+    Color getTabLabelColor(int index)
+    {
+        return tabs.getForegroundAt(index);
+    }
+
     @Subscribe
     public void onSignalUpdated(SignalUpdated event)
     {
@@ -171,9 +196,9 @@ public class BuySellIndicatorPanel extends PluginPanel
         populate(sellList, emptySell, partitioned.get(Signal.SELL));
         populate(holdList, emptyHold, partitioned.get(Signal.HOLD));
 
-        tabs.setTitleAt(0, "Buy (" + partitioned.get(Signal.BUY).size() + ")");
-        tabs.setTitleAt(1, "Sell (" + partitioned.get(Signal.SELL).size() + ")");
-        tabs.setTitleAt(2, "Hold (" + partitioned.get(Signal.HOLD).size() + ")");
+        updateTabTitle(BUY_TAB_INDEX, "Buy (" + partitioned.get(Signal.BUY).size() + ")");
+        updateTabTitle(SELL_TAB_INDEX, "Sell (" + partitioned.get(Signal.SELL).size() + ")");
+        updateTabTitle(HOLD_TAB_INDEX, "Hold (" + partitioned.get(Signal.HOLD).size() + ")");
     }
 
     private void populate(JPanel list, JLabel empty, List<SignalListModel.ItemEntry> entries)
@@ -246,9 +271,24 @@ public class BuySellIndicatorPanel extends PluginPanel
             case BUY:
                 return new Color(0, 220, 80);
             case SELL:
-                return new Color(220, 50, 50);
+                return new Color(255, 128, 128);
             default:
-                return new Color(160, 160, 160);
+                return ColorScheme.TEXT_COLOR;
+        }
+    }
+
+    private void updateTabTitle(int index, String title)
+    {
+        tabs.setTitleAt(index, title);
+        updateTabLabelColors();
+    }
+
+    private void updateTabLabelColors()
+    {
+        int selectedIndex = tabs.getSelectedIndex();
+        if (selectedIndex >= 0)
+        {
+            tabs.setForegroundAt(selectedIndex, Color.BLACK);
         }
     }
 
@@ -277,7 +317,7 @@ public class BuySellIndicatorPanel extends PluginPanel
     private static JLabel emptyLabel(String text)
     {
         JLabel label = new JLabel(text);
-        label.setForeground(Color.GRAY);
+        label.setForeground(ColorScheme.TEXT_COLOR);
         label.setAlignmentX(Component.LEFT_ALIGNMENT);
         label.setBorder(new EmptyBorder(8, 4, 8, 4));
         return label;

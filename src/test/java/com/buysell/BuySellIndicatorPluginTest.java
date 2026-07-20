@@ -3,10 +3,16 @@ package com.buysell;
 import com.buysell.model.Signal;
 import com.buysell.model.SignalResult;
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
+import net.runelite.api.InventoryID;
+import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
+import net.runelite.api.ItemContainer;
 import net.runelite.api.Menu;
 import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.gameval.InterfaceID;
@@ -28,9 +34,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -131,6 +137,76 @@ public class BuySellIndicatorPluginTest
         when(ev.getKey()).thenReturn("fontSize");
         plugin.onConfigChanged(ev);
         verify(analysisService, never()).clearCache();
+    }
+
+    @Test
+    public void onGameStateChanged_queuesDistinctTradeableInventoryItems()
+    {
+        when(config.showOnInventory()).thenReturn(true);
+
+        Item tradeable = mock(Item.class);
+        Item duplicate = mock(Item.class);
+        Item untradeable = mock(Item.class);
+        Item empty = mock(Item.class);
+        when(tradeable.getId()).thenReturn(4151);
+        when(duplicate.getId()).thenReturn(4151);
+        when(untradeable.getId()).thenReturn(995);
+        when(empty.getId()).thenReturn(-1);
+
+        ItemContainer inventory = mock(ItemContainer.class);
+        when(inventory.getItems()).thenReturn(new Item[]{tradeable, duplicate, untradeable, empty});
+        when(client.getItemContainer(InventoryID.INVENTORY)).thenReturn(inventory);
+        when(itemManager.canonicalize(4151)).thenReturn(4151);
+        when(itemManager.canonicalize(995)).thenReturn(995);
+
+        ItemComposition tradeableComposition = mock(ItemComposition.class);
+        when(tradeableComposition.isTradeable()).thenReturn(true);
+        ItemComposition untradeableComposition = mock(ItemComposition.class);
+        when(untradeableComposition.isTradeable()).thenReturn(false);
+        when(itemManager.getItemComposition(4151)).thenReturn(tradeableComposition);
+        when(itemManager.getItemComposition(995)).thenReturn(untradeableComposition);
+
+        GameStateChanged event = mock(GameStateChanged.class);
+        when(event.getGameState()).thenReturn(GameState.LOGGED_IN);
+        plugin.onGameStateChanged(event);
+
+        verify(analysisService, times(1)).getSignal(4151);
+        verify(analysisService, never()).getSignal(995);
+    }
+
+    @Test
+    public void onItemContainerChanged_queuesInventoryAnalysis()
+    {
+        when(config.showOnInventory()).thenReturn(true);
+
+        Item item = mock(Item.class);
+        when(item.getId()).thenReturn(4151);
+        ItemContainer inventory = mock(ItemContainer.class);
+        when(inventory.getItems()).thenReturn(new Item[]{item});
+        when(client.getItemContainer(InventoryID.INVENTORY)).thenReturn(inventory);
+        when(itemManager.canonicalize(4151)).thenReturn(4151);
+
+        ItemComposition composition = mock(ItemComposition.class);
+        when(composition.isTradeable()).thenReturn(true);
+        when(itemManager.getItemComposition(4151)).thenReturn(composition);
+
+        ItemContainerChanged event = mock(ItemContainerChanged.class);
+        when(event.getContainerId()).thenReturn(InventoryID.INVENTORY.getId());
+        plugin.onItemContainerChanged(event);
+
+        verify(analysisService).getSignal(4151);
+    }
+
+    @Test
+    public void onGameStateChanged_skipsInventoryAnalysisWhenDisabled()
+    {
+        when(config.showOnInventory()).thenReturn(false);
+
+        GameStateChanged event = mock(GameStateChanged.class);
+        when(event.getGameState()).thenReturn(GameState.LOGGED_IN);
+        plugin.onGameStateChanged(event);
+
+        verify(client, never()).getItemContainer(InventoryID.INVENTORY);
     }
 
     @Test
