@@ -16,6 +16,7 @@ import javax.inject.Inject;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -29,6 +30,10 @@ import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.geom.Arc2D;
 import java.util.List;
 import java.util.Map;
 
@@ -105,12 +110,11 @@ public class BuySellIndicatorPanel extends PluginPanel
         title.setForeground(Color.WHITE);
         title.setFont(title.getFont().deriveFont(Font.BOLD, 14f));
 
-        settingsButton = new JButton("\u2699");
+        settingsButton = new JButton(new CogIcon());
         SwingUtil.removeButtonDecorations(settingsButton);
         settingsButton.setToolTipText("Open settings");
         settingsButton.setPreferredSize(new Dimension(28, 28));
         settingsButton.setForeground(ColorScheme.TEXT_COLOR);
-        settingsButton.setFont(settingsButton.getFont().deriveFont(20f));
         settingsButton.setFocusPainted(false);
         settingsButton.getAccessibleContext().setAccessibleName("Settings");
         settingsButton.addActionListener(e -> showSettings());
@@ -321,5 +325,51 @@ public class BuySellIndicatorPanel extends PluginPanel
         label.setAlignmentX(Component.LEFT_ALIGNMENT);
         label.setBorder(new EmptyBorder(8, 4, 8, 4));
         return label;
+    }
+
+    /**
+     * Draws a gear directly so its appearance does not depend on a font glyph
+     * being available in the RuneLite client.
+     */
+    private static final class CogIcon implements Icon
+    {
+        private static final int SIZE = 18;
+
+        @Override
+        public void paintIcon(Component component, Graphics graphics, int x, int y)
+        {
+            Graphics2D g = (Graphics2D) graphics.create();
+            try
+            {
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setColor(component.isEnabled() ? ColorScheme.TEXT_COLOR : Color.GRAY);
+                int centerX = x + SIZE / 2;
+                int centerY = y + SIZE / 2;
+
+                for (int angle = 0; angle < 360; angle += 45)
+                {
+                    g.fill(new Arc2D.Double(centerX - 3, centerY - 8, 6, 6, angle, 30, Arc2D.PIE));
+                }
+                g.fillOval(centerX - 6, centerY - 6, 12, 12);
+                g.setColor(ColorScheme.DARK_GRAY_COLOR);
+                g.fillOval(centerX - 2, centerY - 2, 4, 4);
+            }
+            finally
+            {
+                g.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth()
+        {
+            return SIZE;
+        }
+
+        @Override
+        public int getIconHeight()
+        {
+            return SIZE;
+        }
     }
 }

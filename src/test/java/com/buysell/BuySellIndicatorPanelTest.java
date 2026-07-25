@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -86,11 +87,11 @@ public class BuySellIndicatorPanelTest
     {
         SwingUtilities.invokeAndWait(() ->
         {
-            assertEquals("\u2699", panel.getSettingsButton().getText());
+            assertNotNull(panel.getSettingsButton().getIcon());
             panel.getSettingsButton().doClick();
             assertTrue(panel.isShowingSettings());
 
-            assertEquals("\u2190", panel.getSettingsPanel().getBackButton().getText());
+            assertNotNull(panel.getSettingsPanel().getBackButton().getIcon());
             panel.getSettingsPanel().getBackButton().doClick();
             assertFalse(panel.isShowingSettings());
         });
