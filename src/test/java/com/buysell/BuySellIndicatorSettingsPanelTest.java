@@ -4,16 +4,9 @@ import net.runelite.client.config.ConfigManager;
 import org.junit.Before;
 import org.junit.Test;
 
-import javax.swing.JButton;
-import javax.swing.JCheckBox;
-import javax.swing.JComponent;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
-import java.awt.Component;
-import java.awt.Container;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -53,9 +46,10 @@ public class BuySellIndicatorSettingsPanelTest
         AtomicBoolean ok = new AtomicBoolean();
         SwingUtilities.invokeAndWait(() ->
         {
-            AtomicBoolean backCalled = new AtomicBoolean();
             BuySellIndicatorSettingsPanel panel = new BuySellIndicatorSettingsPanel(
-                config, configManager, () -> backCalled.set(true));
+                config, configManager, () ->
+            {
+            });
             ok.set(panel.save());
         });
         assertTrue(ok.get());
@@ -86,9 +80,8 @@ public class BuySellIndicatorSettingsPanelTest
                 config, configManager, () ->
             {
             });
-            JCheckBox inventory = findFirst(panel, JCheckBox.class);
-            assertNotNull(inventory);
-            inventory.setSelected(false);
+            assertNotNull(panel.getShowOnInventoryCheckbox());
+            panel.getShowOnInventoryCheckbox().setSelected(false);
             draft.set(panel.getDraft());
         });
         assertFalse(draft.get().isShowOnInventory());
@@ -104,8 +97,7 @@ public class BuySellIndicatorSettingsPanelTest
                 config, configManager, () ->
             {
             });
-            List<JSpinner> spinners = findAll(panel, JSpinner.class);
-            JSpinner minConf = spinners.get(0);
+            JSpinner minConf = panel.getMinConfidenceSpinner();
             SpinnerNumberModel model = (SpinnerNumberModel) minConf.getModel();
             model.setMaximum(200);
             minConf.setValue(99);
@@ -129,34 +121,24 @@ public class BuySellIndicatorSettingsPanelTest
         });
     }
 
-    private static <T extends Component> T findFirst(Container root, Class<T> type)
+    @Test
+    public void navigationControls_haveStableNames() throws Exception
     {
-        for (T c : findAll(root, type))
+        SwingUtilities.invokeAndWait(() ->
         {
-            return c;
-        }
-        return null;
+            BuySellIndicatorSettingsPanel panel = new BuySellIndicatorSettingsPanel(
+                config, configManager, () ->
+            {
+            });
+            assertNotNull(panel.getBackButton().getIcon());
+            assertEqualsName(panel.getBackButton().getName(), "backButton");
+            assertEqualsName(panel.getShowOnInventoryCheckbox().getName(), "showOnInventory");
+            assertEqualsName(panel.getMinConfidenceSpinner().getName(), "minConfidence");
+        });
     }
 
-    private static <T extends Component> List<T> findAll(Container root, Class<T> type)
+    private static void assertEqualsName(String actual, String expected)
     {
-        List<T> out = new ArrayList<>();
-        collect(root, type, out);
-        return out;
-    }
-
-    private static <T extends Component> void collect(Container root, Class<T> type, List<T> out)
-    {
-        for (Component c : root.getComponents())
-        {
-            if (type.isInstance(c))
-            {
-                out.add(type.cast(c));
-            }
-            if (c instanceof Container)
-            {
-                collect((Container) c, type, out);
-            }
-        }
+        org.junit.Assert.assertEquals(expected, actual);
     }
 }

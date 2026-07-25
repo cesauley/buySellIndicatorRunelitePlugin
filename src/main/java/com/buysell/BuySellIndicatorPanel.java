@@ -8,15 +8,12 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.ColorScheme;
+import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
-import net.runelite.client.util.AsyncBufferedImage;
-import net.runelite.client.util.SwingUtil;
 
 import javax.inject.Inject;
-import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
-import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -25,15 +22,10 @@ import javax.swing.JTabbedPane;
 import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
-import java.awt.Cursor;
 import java.awt.Dimension;
-import java.awt.Font;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
-import java.awt.geom.Arc2D;
 import java.util.List;
 import java.util.Map;
 
@@ -44,17 +36,19 @@ import java.util.Map;
 @Slf4j
 public class BuySellIndicatorPanel extends PluginPanel
 {
+    private static final String CARD_DASHBOARD = "dashboard";
+    private static final String CARD_SETTINGS = "settings";
+
     private static final int BUY_TAB_INDEX = 0;
     private static final int SELL_TAB_INDEX = 1;
     private static final int HOLD_TAB_INDEX = 2;
 
     private final PriceAnalysisService analysisService;
     private final ItemManager itemManager;
-    private final BuySellIndicatorConfig config;
-    private final ConfigManager configManager;
     private final GraphOpeningService graphOpeningService;
 
-    private final JPanel cardHost = new JPanel(new BorderLayout());
+    private final CardLayout cards = new CardLayout();
+    private final JPanel cardHost = new JPanel(cards);
     private final JPanel dashboard = new JPanel(new BorderLayout());
     private BuySellIndicatorSettingsPanel settingsPanel;
 
@@ -80,8 +74,6 @@ public class BuySellIndicatorPanel extends PluginPanel
         super(false);
         this.analysisService = analysisService;
         this.itemManager = itemManager;
-        this.config = config;
-        this.configManager = configManager;
         this.graphOpeningService = graphOpeningService;
 
         setLayout(new BorderLayout());
@@ -91,53 +83,40 @@ public class BuySellIndicatorPanel extends PluginPanel
         settingsPanel = new BuySellIndicatorSettingsPanel(config, configManager, this::showDashboard);
 
         cardHost.setBackground(ColorScheme.DARK_GRAY_COLOR);
-        cardHost.add(dashboard, BorderLayout.CENTER);
+        cardHost.add(dashboard, CARD_DASHBOARD);
+        cardHost.add(settingsPanel, CARD_SETTINGS);
         add(cardHost, BorderLayout.CENTER);
 
-        refreshLists();
+        showDashboard();
     }
 
     private void buildDashboard()
     {
         dashboard.setBackground(ColorScheme.DARK_GRAY_COLOR);
-        dashboard.setBorder(new EmptyBorder(6, 6, 6, 6));
+        dashboard.setBorder(new EmptyBorder(10, 10, 10, 10));
 
-        JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(ColorScheme.DARK_GRAY_COLOR);
-        header.setBorder(new EmptyBorder(0, 0, 8, 0));
-
-        JLabel title = new JLabel("Buy / Sell Signals");
-        title.setForeground(Color.WHITE);
-        title.setFont(title.getFont().deriveFont(Font.BOLD, 14f));
-
-        settingsButton = new JButton(new CogIcon());
-        SwingUtil.removeButtonDecorations(settingsButton);
-        settingsButton.setToolTipText("Open settings");
-        settingsButton.setPreferredSize(new Dimension(28, 28));
-        settingsButton.setForeground(ColorScheme.TEXT_COLOR);
-        settingsButton.setFocusPainted(false);
-        settingsButton.getAccessibleContext().setAccessibleName("Settings");
+        settingsButton = PanelUi.iconButton(PanelUi.cogIcon(), "Open settings", "Settings");
+        settingsButton.setName("settingsButton");
         settingsButton.addActionListener(e -> showSettings());
 
-        header.add(title, BorderLayout.CENTER);
-        header.add(settingsButton, BorderLayout.EAST);
+        dashboard.add(PanelUi.header("Buy / Sell Signals", null, settingsButton), BorderLayout.NORTH);
 
         tabs.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        tabs.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        tabs.setFont(FontManager.getRunescapeSmallFont());
         tabs.addTab("Buy", wrapList(buyList));
         tabs.addTab("Sell", wrapList(sellList));
         tabs.addTab("Hold", wrapList(holdList));
         tabs.addChangeListener(e -> updateTabLabelColors());
         updateTabLabelColors();
 
-        dashboard.add(header, BorderLayout.NORTH);
         dashboard.add(tabs, BorderLayout.CENTER);
     }
 
     void showSettings()
     {
         settingsPanel.reloadFromConfig();
-        cardHost.removeAll();
-        cardHost.add(settingsPanel, BorderLayout.CENTER);
+        cards.show(cardHost, CARD_SETTINGS);
         showingSettings = true;
         cardHost.revalidate();
         cardHost.repaint();
@@ -145,8 +124,7 @@ public class BuySellIndicatorPanel extends PluginPanel
 
     void showDashboard()
     {
-        cardHost.removeAll();
-        cardHost.add(dashboard, BorderLayout.CENTER);
+        cards.show(cardHost, CARD_DASHBOARD);
         showingSettings = false;
         refreshLists();
         cardHost.revalidate();
@@ -214,71 +192,21 @@ public class BuySellIndicatorPanel extends PluginPanel
         }
         else
         {
-            for (SignalListModel.ItemEntry entry : entries)
+            for (int i = 0; i < entries.size(); i++)
             {
-                list.add(createRow(entry));
-                list.add(Box.createVerticalStrut(4));
+                SignalListModel.ItemEntry entry = entries.get(i);
+                list.add(new SignalItemPanel(
+                    entry,
+                    itemManager,
+                    () -> graphOpeningService.openItemGraph(entry.getItemId())));
+                if (i < entries.size() - 1)
+                {
+                    list.add(Box.createVerticalStrut(8));
+                }
             }
         }
         list.revalidate();
         list.repaint();
-    }
-
-    private JPanel createRow(SignalListModel.ItemEntry entry)
-    {
-        JPanel row = new JPanel(new BorderLayout(6, 0));
-        row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-        row.setBorder(new EmptyBorder(4, 4, 4, 4));
-        row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
-
-        JLabel iconLabel = new JLabel();
-        iconLabel.setPreferredSize(new Dimension(32, 32));
-        try
-        {
-            AsyncBufferedImage image = itemManager.getImage(entry.getItemId());
-            if (image != null)
-            {
-                image.addTo(iconLabel);
-            }
-        }
-        catch (Exception e)
-        {
-            log.debug("Failed to load item image for {}: {}", entry.getItemId(), e.getMessage());
-        }
-
-        JLabel name = new JLabel(entry.getName());
-        name.setForeground(Color.WHITE);
-
-        JLabel conf = new JLabel(String.format("%.0f%%", entry.getConfidence()));
-        conf.setForeground(signalColor(entry.getSignal()));
-
-        row.add(iconLabel, BorderLayout.WEST);
-        row.add(name, BorderLayout.CENTER);
-        row.add(conf, BorderLayout.EAST);
-
-        row.addMouseListener(new java.awt.event.MouseAdapter()
-        {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent e)
-            {
-                graphOpeningService.openItemGraph(entry.getItemId());
-            }
-        });
-        return row;
-    }
-
-    private static Color signalColor(Signal signal)
-    {
-        switch (signal)
-        {
-            case BUY:
-                return new Color(0, 220, 80);
-            case SELL:
-                return new Color(255, 128, 128);
-            default:
-                return ColorScheme.TEXT_COLOR;
-        }
     }
 
     private void updateTabTitle(int index, String title)
@@ -289,9 +217,14 @@ public class BuySellIndicatorPanel extends PluginPanel
 
     private void updateTabLabelColors()
     {
+        for (int i = 0; i < tabs.getTabCount(); i++)
+        {
+            tabs.setForegroundAt(i, ColorScheme.LIGHT_GRAY_COLOR);
+        }
         int selectedIndex = tabs.getSelectedIndex();
         if (selectedIndex >= 0)
         {
+            // Selected tab text stays high-contrast for readability (not signal-colored).
             tabs.setForegroundAt(selectedIndex, Color.BLACK);
         }
     }
@@ -301,75 +234,24 @@ public class BuySellIndicatorPanel extends PluginPanel
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
         panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
-        panel.setBorder(new EmptyBorder(4, 0, 4, 0));
+        panel.setBorder(new EmptyBorder(0, 0, 0, 0));
         return panel;
     }
 
     private static JScrollPane wrapList(JPanel list)
     {
-        JPanel north = new JPanel(new BorderLayout());
-        north.setBackground(ColorScheme.DARK_GRAY_COLOR);
-        north.add(list, BorderLayout.NORTH);
-
-        JScrollPane scroll = new JScrollPane(north);
-        scroll.setBorder(BorderFactory.createEmptyBorder());
-        scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        scroll.getVerticalScrollBar().setUnitIncrement(16);
+        JScrollPane scroll = PanelUi.verticalScroll(list);
+        scroll.setBorder(new EmptyBorder(8, 0, 0, 0));
         return scroll;
     }
 
     private static JLabel emptyLabel(String text)
     {
         JLabel label = new JLabel(text);
-        label.setForeground(ColorScheme.TEXT_COLOR);
+        label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        label.setFont(FontManager.getRunescapeSmallFont());
         label.setAlignmentX(Component.LEFT_ALIGNMENT);
-        label.setBorder(new EmptyBorder(8, 4, 8, 4));
+        label.setBorder(new EmptyBorder(12, 4, 12, 4));
         return label;
-    }
-
-    /**
-     * Draws a gear directly so its appearance does not depend on a font glyph
-     * being available in the RuneLite client.
-     */
-    private static final class CogIcon implements Icon
-    {
-        private static final int SIZE = 18;
-
-        @Override
-        public void paintIcon(Component component, Graphics graphics, int x, int y)
-        {
-            Graphics2D g = (Graphics2D) graphics.create();
-            try
-            {
-                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g.setColor(component.isEnabled() ? ColorScheme.TEXT_COLOR : Color.GRAY);
-                int centerX = x + SIZE / 2;
-                int centerY = y + SIZE / 2;
-
-                for (int angle = 0; angle < 360; angle += 45)
-                {
-                    g.fill(new Arc2D.Double(centerX - 3, centerY - 8, 6, 6, angle, 30, Arc2D.PIE));
-                }
-                g.fillOval(centerX - 6, centerY - 6, 12, 12);
-                g.setColor(ColorScheme.DARK_GRAY_COLOR);
-                g.fillOval(centerX - 2, centerY - 2, 4, 4);
-            }
-            finally
-            {
-                g.dispose();
-            }
-        }
-
-        @Override
-        public int getIconWidth()
-        {
-            return SIZE;
-        }
-
-        @Override
-        public int getIconHeight()
-        {
-            return SIZE;
-        }
     }
 }
